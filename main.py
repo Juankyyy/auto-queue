@@ -9,6 +9,7 @@ import time
 import math
 import os
 import ctypes
+from PIL import Image, ImageTk
 from bot import LoLAutoAccept
 
 # Identificador de aplicación para que Windows muestre el icono propio en la barra de tareas
@@ -202,9 +203,11 @@ class App:
         self._center_window(390, 610)
 
         # Configurar icono de ventana y barra de tareas
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        ico_path = os.path.join(base_dir, "app_icon.ico")
-        png_path = os.path.join(base_dir, "app_icon.png")
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        ico_path = os.path.join(self.base_dir, "app_icon.ico")
+        logo_path = os.path.join(self.base_dir, "templates", "logo.png")
+        if not os.path.exists(logo_path):
+            logo_path = os.path.join(self.base_dir, "app_icon.png")
 
         if os.path.exists(ico_path):
             try:
@@ -212,9 +215,9 @@ class App:
             except Exception:
                 pass
 
-        if os.path.exists(png_path):
+        if os.path.exists(logo_path):
             try:
-                self._icon_img = tk.PhotoImage(file=png_path)
+                self._icon_img = ImageTk.PhotoImage(file=logo_path)
                 self.root.iconphoto(True, self._icon_img)
             except Exception:
                 pass
@@ -240,7 +243,21 @@ class App:
         header = tk.Frame(root, bg=BG)
         header.pack(fill="x", padx=24, pady=(24, 10))
 
-        HexIcon(header, size=46).pack(side="left")
+        # Logo de la app desde templates/logo.png
+        logo_path = os.path.join(self.base_dir, "templates", "logo.png")
+        logo_loaded = False
+        if os.path.exists(logo_path):
+            try:
+                pil_logo = Image.open(logo_path).resize((46, 46), Image.Resampling.LANCZOS)
+                self.header_logo = ImageTk.PhotoImage(pil_logo)
+                logo_lbl = tk.Label(header, image=self.header_logo, bg=BG)
+                logo_lbl.pack(side="left")
+                logo_loaded = True
+            except Exception:
+                logo_loaded = False
+
+        if not logo_loaded:
+            HexIcon(header, size=46).pack(side="left")
 
         titles = tk.Frame(header, bg=BG)
         titles.pack(side="left", padx=12)
