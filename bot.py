@@ -28,6 +28,7 @@ class LoLAutoAccept:
         self.delay = 0.5          # segundos antes de hacer clic
         self.threshold = 0.80     # confianza mínima (0-1)
         self.poll_interval = 0.5  # segundos entre capturas
+        self.auto_deactivate = True # si True, se apaga tras aceptar una partida
 
     # ------------------------------------------------------------------
     # Control del loop
@@ -68,9 +69,16 @@ class LoLAutoAccept:
                     self._click(location)
                     self.partidas_aceptadas += 1
                     self.log(f"🎮 Partida #{self.partidas_aceptadas} aceptada.")
-                    self.running = False
-                    self.on_accepted()
-                    break
+
+                    if self.auto_deactivate:
+                        self.running = False
+                        self.on_accepted(True)
+                        break
+                    else:
+                        self.on_accepted(False)
+                        self.log("⏳ En espera... Manteniendo bot activo por si se cancela la cola.")
+                        # Esperar a que la ventana de diálogo desaparezca
+                        time.sleep(6)
 
             except Exception as e:
                 self.log(f"⚠️ Error: {e}")
