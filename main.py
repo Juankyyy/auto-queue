@@ -375,9 +375,11 @@ class App:
         win = tk.Toplevel(self.root)
         self._settings_win = win
         win.title("Ajustes - LoL Auto Queue")
-        win.geometry("350x510")
+        win.geometry("350x546")
         win.resizable(False, False)
         win.configure(bg=BG)
+        win.overrideredirect(True)
+        win.transient(self.root)
 
         # Centrar sobre la ventana principal
         self.root.update_idletasks()
@@ -386,8 +388,40 @@ class App:
         rw = self.root.winfo_width()
         rh = self.root.winfo_height()
         x = rx + (rw - 350) // 2
-        y = ry + (rh - 510) // 2
-        win.geometry(f"350x510+{max(0, x)}+{max(0, y)}")
+        y = ry + (rh - 546) // 2
+        win.geometry(f"350x546+{max(0, x)}+{max(0, y)}")
+
+        self._apply_frameless_style(win)
+
+        # Arrastre de la ventana de ajustes
+        drag = {"x": 0, "y": 0}
+
+        def _s_start_move(event):
+            drag["x"] = event.x_root - win.winfo_x()
+            drag["y"] = event.y_root - win.winfo_y()
+
+        def _s_on_move(event):
+            win.geometry(f"+{event.x_root - drag['x']}+{event.y_root - drag['y']}")
+
+        # ── Barra de título personalizada ──
+        s_titlebar = tk.Frame(win, bg=BG, height=36)
+        s_titlebar.pack(fill="x", side="top")
+        s_titlebar.pack_propagate(False)
+        s_titlebar.bind("<ButtonPress-1>", _s_start_move)
+        s_titlebar.bind("<B1-Motion>", _s_on_move)
+
+        s_tb_title = tk.Label(s_titlebar, text="Ajustes",
+                              font=("Segoe UI", 8), fg=TEXT_DIM, bg=BG)
+        s_tb_title.pack(side="left", padx=12)
+        s_tb_title.bind("<ButtonPress-1>", _s_start_move)
+        s_tb_title.bind("<B1-Motion>", _s_on_move)
+
+        s_tb_close = tk.Label(s_titlebar, text="✕", font=("Segoe UI", 10, "bold"),
+                              fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
+        s_tb_close.pack(side="right", fill="y")
+        s_tb_close.bind("<Button-1>", lambda _: win.destroy())
+        s_tb_close.bind("<Enter>", lambda _: s_tb_close.config(bg=RED, fg=WHITE))
+        s_tb_close.bind("<Leave>", lambda _: s_tb_close.config(bg=BG, fg=TEXT_DIM))
 
         # Icono si existe
         ico_path = os.path.join(self.base_dir, "app_icon.ico")
@@ -399,17 +433,10 @@ class App:
 
         # Encabezado de Ajustes
         s_header = tk.Frame(win, bg=BG)
-        s_header.pack(fill="x", padx=20, pady=(18, 10))
+        s_header.pack(fill="x", padx=20, pady=(6, 10))
 
         tk.Label(s_header, text="⚙  AJUSTES", font=("Segoe UI", 12, "bold"),
                  fg=GOLD, bg=BG).pack(side="left")
-
-        close_btn = tk.Label(s_header, text="✕", font=("Segoe UI", 11, "bold"),
-                             fg=TEXT_DIM, bg=BG, cursor="hand2")
-        close_btn.pack(side="right")
-        close_btn.bind("<Button-1>", lambda _: win.destroy())
-        close_btn.bind("<Enter>", lambda _: close_btn.config(fg=RED))
-        close_btn.bind("<Leave>", lambda _: close_btn.config(fg=TEXT_DIM))
 
         Divider(win).pack(fill="x", padx=20, pady=(0, 14))
 
@@ -500,6 +527,15 @@ class App:
         cal_btn.bind("<Button-1>", lambda e: (win.destroy(), self._calibrate()))
         cal_btn.bind("<Enter>", lambda _: cal_btn.config(bg="#2D333B", fg=WHITE))
         cal_btn.bind("<Leave>", lambda _: cal_btn.config(bg=BORDER, fg=CYAN))
+
+        # La ventana recién creada (frameless + transient) puede abrirse
+        # detrás de la principal: traerla al frente ya en el primer clic.
+        win.update_idletasks()
+        win.deiconify()
+        win.lift()
+        win.focus_force()
+        win.after(10, lambda: (win.lift(), win.focus_force())
+                 if win.winfo_exists() else None)
 
     def _make_slider(self, parent, label, var_name, lbl_name,
                      from_, to, resolution, default, fmt):
@@ -626,10 +662,12 @@ class App:
         y = (sh - h) // 2
         self.root.geometry(f"{w}x{h}+{x}+{y}")
 
-    def _apply_frameless_style(self):
+    def _apply_frameless_style(self, window=None):
         """Mantiene el icono en la barra de tareas y esquinas redondeadas en Win11."""
+        target = window if window is not None else self.root
+        is_main = target is self.root
         try:
-            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            hwnd = ctypes.windll.user32.GetParent(target.winfo_id())
             # Esquinas redondeadas (Windows 11)
             try:
                 DWMWA_WINDOW_CORNER_PREFERENCE = 33
@@ -640,22 +678,24 @@ class App:
             except Exception:
                 pass
             # Conservar icono en barra de tareas con overrideredirect(True)
-            GWL_EXSTYLE = -20
-            WS_EX_APPWINDOW = 0x00040000
-            WS_EX_TOOLWINDOW = 0x00000080
-            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
-            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
-            # Refrescar para que el cambio de estilo aplique
-            SWP_NOMOVE = 0x0002
-            SWP_NOSIZE = 0x0001
-            SWP_NOZORDER = 0x0004
-            SWP_FRAMECHANGED = 0x0020
-            ctypes.windll.user32.SetWindowPos(
-                hwnd, 0, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
-            self.root.withdraw()
-            self.root.after(10, self.root.deiconify)
+            # (solo ventana principal; el Toplevel usa transient)
+            if is_main:
+                GWL_EXSTYLE = -20
+                WS_EX_APPWINDOW = 0x00040000
+                WS_EX_TOOLWINDOW = 0x00000080
+                style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
+                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+                # Refrescar para que el cambio de estilo aplique
+                SWP_NOMOVE = 0x0002
+                SWP_NOSIZE = 0x0001
+                SWP_NOZORDER = 0x0004
+                SWP_FRAMECHANGED = 0x0020
+                ctypes.windll.user32.SetWindowPos(
+                    hwnd, 0, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
+                self.root.withdraw()
+                self.root.after(10, self.root.deiconify)
         except Exception:
             pass
 
