@@ -120,7 +120,7 @@ class GlowButton(tk.Canvas):
 
         # Texto
         self.create_text(w // 2, h // 2, text=label,
-                         font=("Segoe UI", 12, "bold"), fill=text_color)
+                         font=("Cascadia Code", 13, "bold"), fill=text_color)
 
     def create_rounded_rect(self, x1, y1, x2, y2, radius=10, **kwargs):
         points = [
@@ -176,7 +176,7 @@ class HexIcon(tk.Canvas):
         # Hexágono interior cyan
         self.create_polygon(pts_inner, fill="", outline=CYAN, width=1)
         # Letra central
-        self.create_text(cx, cy, text="L", font=("Segoe UI", int(size * 0.3), "bold"),
+        self.create_text(cx, cy, text="L", font=("Cascadia Code", int(size * 0.3), "bold"),
                          fill=GOLD)
 
     @staticmethod
@@ -198,7 +198,7 @@ class App:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("LoL Auto Queue")
-        self.root.geometry("390x540")
+        self.root.geometry("390x560")
         self.root.resizable(False, False)
         self.root.configure(bg=BG)
         # Ventana sin decoración nativa de Windows (frameless)
@@ -208,7 +208,7 @@ class App:
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self._config_path = os.path.join(self.base_dir, "config.json")
 
-        self._center_window(390, 540)
+        self._center_window(390, 560)
         self._apply_frameless_style()
 
         # Configurar icono de ventana y barra de tareas (nuevo icono primero)
@@ -274,20 +274,20 @@ class App:
         titlebar.bind("<B1-Motion>", self._on_move)
 
         tb_title = tk.Label(titlebar, text="LoL Auto Queue",
-                            font=("Segoe UI", 8), fg=TEXT_DIM, bg=BG)
+                            font=("Cascadia Code", 9), fg=TEXT_DIM, bg=BG)
         tb_title.pack(side="left", padx=12)
         tb_title.bind("<ButtonPress-1>", self._start_move)
         tb_title.bind("<B1-Motion>", self._on_move)
 
         # Botones arriba a la derecha: Ajustes y Cerrar
-        tb_close = tk.Label(titlebar, text="✕", font=("Segoe UI", 10, "bold"),
+        tb_close = tk.Label(titlebar, text="✕", font=("Segoe UI Symbol", 10, "bold"),
                             fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
         tb_close.pack(side="right", fill="y")
         tb_close.bind("<Button-1>", lambda _: self._close_app())
         tb_close.bind("<Enter>", lambda _: tb_close.config(bg=RED, fg=WHITE))
         tb_close.bind("<Leave>", lambda _: tb_close.config(bg=BG, fg=TEXT_DIM))
 
-        tb_cfg = tk.Label(titlebar, text="⚙", font=("Segoe UI", 11),
+        tb_cfg = tk.Label(titlebar, text="⚙", font=("Segoe UI Symbol", 11),
                           fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
         tb_cfg.pack(side="right", fill="y")
         tb_cfg.bind("<Button-1>", self._open_settings)
@@ -320,9 +320,9 @@ class App:
         titles = tk.Frame(header, bg=BG)
         titles.pack(side="left", padx=12)
         tk.Label(titles, text="LoL Auto Queue",
-                 font=("Segoe UI", 15, "bold"), fg=GOLD, bg=BG).pack(anchor="w")
+                 font=("Cascadia Code", 16, "bold"), fg=GOLD, bg=BG).pack(anchor="w")
         tk.Label(titles, text="Acepta partidas automáticamente",
-                 font=("Segoe UI", 9), fg=TEXT_DIM, bg=BG).pack(anchor="w")
+                 font=("Cascadia Code", 10), fg=TEXT_DIM, bg=BG).pack(anchor="w")
 
         Divider(root).pack(fill="x", padx=24, pady=(0, 0))
 
@@ -337,13 +337,13 @@ class App:
         self.dot.pack(side="left")
 
         self.status_lbl = tk.Label(left, text="INACTIVO",
-                                   font=("Segoe UI", 10, "bold"),
+                                   font=("Cascadia Code", 11, "bold"),
                                    fg=RED, bg=CARD)
         self.status_lbl.pack(side="left", padx=(8, 0))
 
         self.count_lbl = tk.Label(status_card,
                                   text="Partidas aceptadas: 0",
-                                  font=("Segoe UI", 9), fg=TEXT_DIM, bg=CARD)
+                                  font=("Cascadia Code", 10), fg=TEXT_DIM, bg=CARD)
         self.count_lbl.pack(side="right", padx=16)
 
         # ── Botón toggle ─────────────────────────
@@ -358,12 +358,12 @@ class App:
         log_card.pack(fill="both", expand=True, padx=24, pady=(8, 20))
 
         tk.Label(log_card, text="REGISTRO",
-                 font=("Segoe UI", 8, "bold"), fg=TEXT_DIM, bg=CARD
+                 font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=CARD
                  ).pack(anchor="w", padx=14, pady=(10, 4))
 
         self.log_box = tk.Text(
             log_card, height=8, bg="#090D12", fg="#3FB950",
-            font=("Consolas", 8), relief="flat", state="disabled",
+            font=("Cascadia Mono", 8), relief="flat", state="disabled",
             wrap="word", padx=10, pady=8, insertbackground=CYAN,
             selectbackground=BORDER
         )
@@ -388,7 +388,7 @@ class App:
         win = tk.Toplevel(self.root)
         self._settings_win = win
         win.title("Ajustes - LoL Auto Queue")
-        win.geometry("350x680")
+        win.geometry("350x730")
         win.resizable(False, False)
         win.configure(bg=BG)
         win.overrideredirect(True)
@@ -401,8 +401,8 @@ class App:
         rw = self.root.winfo_width()
         rh = self.root.winfo_height()
         x = rx + (rw - 350) // 2
-        y = ry + (rh - 680) // 2
-        win.geometry(f"350x680+{max(0, x)}+{max(0, y)}")
+        y = ry + (rh - 730) // 2
+        win.geometry(f"350x730+{max(0, x)}+{max(0, y)}")
 
         self._apply_frameless_style(win)
 
@@ -424,12 +424,12 @@ class App:
         s_titlebar.bind("<B1-Motion>", _s_on_move)
 
         s_tb_title = tk.Label(s_titlebar, text="Ajustes",
-                              font=("Segoe UI", 8), fg=TEXT_DIM, bg=BG)
+                              font=("Cascadia Code", 9), fg=TEXT_DIM, bg=BG)
         s_tb_title.pack(side="left", padx=12)
         s_tb_title.bind("<ButtonPress-1>", _s_start_move)
         s_tb_title.bind("<B1-Motion>", _s_on_move)
 
-        s_tb_close = tk.Label(s_titlebar, text="✕", font=("Segoe UI", 10, "bold"),
+        s_tb_close = tk.Label(s_titlebar, text="✕", font=("Segoe UI Symbol", 10, "bold"),
                               fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
         s_tb_close.pack(side="right", fill="y")
         s_tb_close.bind("<Button-1>", lambda _: win.destroy())
@@ -448,7 +448,7 @@ class App:
         s_header = tk.Frame(win, bg=BG)
         s_header.pack(fill="x", padx=20, pady=(6, 10))
 
-        tk.Label(s_header, text="⚙  AJUSTES", font=("Segoe UI", 12, "bold"),
+        tk.Label(s_header, text="⚙  AJUSTES", font=("Cascadia Code", 13, "bold"),
                  fg=GOLD, bg=BG).pack(side="left")
 
         Divider(win).pack(fill="x", padx=20, pady=(0, 14))
@@ -458,7 +458,7 @@ class App:
         cfg_card.pack(fill="x", padx=20, pady=0)
 
         tk.Label(cfg_card, text="DETECCIÓN Y TIEMPOS",
-                 font=("Segoe UI", 8, "bold"), fg=TEXT_DIM, bg=CARD
+                 font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=CARD
                  ).pack(anchor="w", padx=16, pady=(12, 8))
 
         # Slider Delay
@@ -476,23 +476,23 @@ class App:
         beh_card.pack(fill="x", padx=20, pady=(10, 0))
 
         tk.Label(beh_card, text="AL ACEPTAR PARTIDA",
-                 font=("Segoe UI", 8, "bold"), fg=TEXT_DIM, bg=CARD
+                 font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=CARD
                  ).pack(anchor="w", padx=16, pady=(12, 8))
 
         beh_btns_frame = tk.Frame(beh_card, bg=CARD)
         beh_btns_frame.pack(fill="x", padx=16, pady=(0, 8))
 
         btn_deact = tk.Label(beh_btns_frame, text="🔒 Desactivar",
-                             font=("Segoe UI", 9, "bold"), cursor="hand2",
+                             font=("Cascadia Code", 10, "bold"), cursor="hand2",
                              pady=7, padx=8)
         btn_deact.pack(side="left", fill="x", expand=True, padx=(0, 4))
 
         btn_keep = tk.Label(beh_btns_frame, text="🔄 Mantener activo",
-                            font=("Segoe UI", 9, "bold"), cursor="hand2",
+                            font=("Cascadia Code", 10, "bold"), cursor="hand2",
                             pady=7, padx=8)
         btn_keep.pack(side="right", fill="x", expand=True, padx=(4, 0))
 
-        beh_desc = tk.Label(beh_card, text="", font=("Segoe UI", 8),
+        beh_desc = tk.Label(beh_card, text="", font=("Cascadia Code", 9),
                             fg=TEXT_DIM, bg=CARD, wraplength=275, justify="left")
         beh_desc.pack(anchor="w", padx=16, pady=(0, 12))
 
@@ -527,16 +527,16 @@ class App:
         tpl_card.pack(fill="x", padx=20, pady=10)
 
         tk.Label(tpl_card, text="TEMPLATE DE RECONOCIMIENTO",
-                 font=("Segoe UI", 8, "bold"), fg=TEXT_DIM, bg=CARD
+                 font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=CARD
                  ).pack(anchor="w", padx=16, pady=(12, 4))
 
         tk.Label(tpl_card, text="Si cambias de resolución de pantalla, puedes volver a capturar el botón.",
-                 font=("Segoe UI", 8), fg=TEXT_DIM, bg=CARD, wraplength=275, justify="left"
+                 font=("Cascadia Code", 9), fg=TEXT_DIM, bg=CARD, wraplength=275, justify="left"
                  ).pack(anchor="w", padx=16, pady=(0, 8))
 
         cal_btn = tk.Label(tpl_card,
                            text="  📸  Capturar Nuevo Template  ",
-                           font=("Segoe UI", 9, "bold"), fg=CYAN, bg=BORDER,
+                           font=("Cascadia Code", 10, "bold"), fg=CYAN, bg=BORDER,
                            cursor="hand2", pady=7, padx=10)
         cal_btn.pack(padx=16, pady=(0, 14), anchor="w")
         cal_btn.bind("<Button-1>", lambda e: (win.destroy(), self._calibrate()))
@@ -548,23 +548,23 @@ class App:
         close_card.pack(fill="x", padx=20, pady=(0, 10))
 
         tk.Label(close_card, text="AL CERRAR LA APP",
-                 font=("Segoe UI", 8, "bold"), fg=TEXT_DIM, bg=CARD
+                 font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=CARD
                  ).pack(anchor="w", padx=16, pady=(12, 8))
 
         close_btns_frame = tk.Frame(close_card, bg=CARD)
         close_btns_frame.pack(fill="x", padx=16, pady=(0, 8))
 
         btn_quit = tk.Label(close_btns_frame, text="⏻ Salir",
-                            font=("Segoe UI", 9, "bold"), cursor="hand2",
+                            font=("Cascadia Code", 10, "bold"), cursor="hand2",
                             pady=7, padx=8)
         btn_quit.pack(side="left", fill="x", expand=True, padx=(0, 4))
 
         btn_tray = tk.Label(close_btns_frame, text="📥 Bandeja",
-                            font=("Segoe UI", 9, "bold"), cursor="hand2",
+                            font=("Cascadia Code", 10, "bold"), cursor="hand2",
                             pady=7, padx=8)
         btn_tray.pack(side="right", fill="x", expand=True, padx=(4, 0))
 
-        close_desc = tk.Label(close_card, text="", font=("Segoe UI", 8),
+        close_desc = tk.Label(close_card, text="", font=("Cascadia Code", 9),
                               fg=TEXT_DIM, bg=CARD, wraplength=275, justify="left")
         close_desc.pack(anchor="w", padx=16, pady=(0, 12))
 
@@ -606,7 +606,7 @@ class App:
         row = tk.Frame(parent, bg=CARD)
         row.pack(fill="x", padx=16, pady=(0, 2))
 
-        tk.Label(row, text=label, font=("Segoe UI", 9),
+        tk.Label(row, text=label, font=("Cascadia Code", 10),
                  fg=TEXT, bg=CARD).pack(side="left")
 
         val = getattr(self, var_name, None)
@@ -615,7 +615,7 @@ class App:
             setattr(self, var_name, val)
 
         val_lbl = tk.Label(row, text=fmt(val.get()),
-                           font=("Segoe UI", 9, "bold"),
+                           font=("Cascadia Code", 10, "bold"),
                            fg=CYAN, bg=CARD, width=5)
         val_lbl.pack(side="right")
         setattr(self, lbl_name, val_lbl)
