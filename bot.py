@@ -7,12 +7,36 @@ import numpy as np
 import pyautogui
 import time
 import os
+import sys
 from PIL import ImageGrab, Image
 
 # Deshabilitar el failsafe de pyautogui (esquina superior izquierda)
 pyautogui.FAILSAFE = True
 
-TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "templates", "accept_btn.png")
+
+def _bundled_path(*parts):
+    """Ruta a un recurso empaquetado (funciona en .py y en .exe de PyInstaller)."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, *parts)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), *parts)
+
+
+def _user_data_dir():
+    """Carpeta escribible (junto al .exe si está congelado)."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _resolve_template_path():
+    """El template se puede recalibrar: prioriza el de junto al .exe, si no el empaquetado."""
+    user_copy = os.path.join(_user_data_dir(), "templates", "accept_btn.png")
+    if os.path.exists(user_copy):
+        return user_copy
+    return _bundled_path("templates", "accept_btn.png")
+
+
+TEMPLATE_PATH = _resolve_template_path()
 
 
 class LoLAutoAccept:
@@ -192,10 +216,14 @@ class LoLAutoAccept:
 
         cropped = screenshot[y1:y2, x1:x2]
 
-        # Guardar template
-        os.makedirs(os.path.dirname(TEMPLATE_PATH), exist_ok=True)
-        cv2.imwrite(TEMPLATE_PATH, cropped)
-        self.log(f"✅ Template guardado correctamente en: {TEMPLATE_PATH}")
+        # Guardar template (junto al .exe si está congelado, para que persista)
+        os.makedirs(os.path.join(_user_data_dir(), "templates"), exist_ok=True)
+        save_path = os.path.join(_user_data_dir(), "templates", "accept_btn.png")
+        cv2.imwrite(save_path, cropped)
+        # Actualizar la ruta en caliente para esta sesión
+        global TEMPLATE_PATH
+        TEMPLATE_PATH = save_path
+        self.log(f"✅ Template guardado correctamente en: {save_path}")
         return True
 
     # ------------------------------------------------------------------

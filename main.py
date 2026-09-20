@@ -25,6 +25,20 @@ except Exception:
     pass
 
 
+def _bundled_path(*parts):
+    """Ruta a un recurso empaquetado (funciona en .py y en .exe de PyInstaller)."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, *parts)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), *parts)
+
+
+def _user_data_dir():
+    """Carpeta escribible para config.json/stats.json (junto al .exe si está congelado)."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 # ──────────────────────────────────────────────
 # Paleta de colores
 # ──────────────────────────────────────────────
@@ -246,17 +260,17 @@ class App:
         self.root.overrideredirect(True)
         self._drag_x = 0
         self._drag_y = 0
-        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.base_dir = _user_data_dir()
         self._config_path = os.path.join(self.base_dir, "config.json")
 
         self._center_window(390, 560)
         self._apply_frameless_style()
 
         # Configurar icono de ventana y barra de tareas (nuevo icono primero)
-        ico_path = os.path.join(self.base_dir, "app_icon.ico")
+        ico_path = _bundled_path("app_icon.ico")
         logo_path = None
-        for candidate in (os.path.join(self.base_dir, "app_icon.png"),
-                          os.path.join(self.base_dir, "templates", "logo.png")):
+        for candidate in (_bundled_path("app_icon.png"),
+                          _bundled_path("templates", "logo.png")):
             if os.path.exists(candidate):
                 logo_path = candidate
                 break
@@ -365,8 +379,8 @@ class App:
 
         # Logo de la app (nuevo icono primero)
         logo_loaded = False
-        for logo_path in (os.path.join(self.base_dir, "app_icon.png"),
-                          os.path.join(self.base_dir, "templates", "logo.png")):
+        for logo_path in (_bundled_path("app_icon.png"),
+                          _bundled_path("templates", "logo.png")):
             if not os.path.exists(logo_path):
                 continue
             try:
@@ -498,7 +512,7 @@ class App:
         s_tb_close.bind("<Leave>", lambda _: s_tb_close.config(bg=BG, fg=TEXT_DIM))
 
         # Icono si existe
-        ico_path = os.path.join(self.base_dir, "app_icon.ico")
+        ico_path = _bundled_path("app_icon.ico")
         if os.path.exists(ico_path):
             try:
                 win.iconbitmap(default=ico_path)
@@ -1242,8 +1256,8 @@ class App:
     def _base_icon(self):
         """Carga el icono nuevo primero (PIL, RGBA)."""
         for candidate in (
-            os.path.join(self.base_dir, "app_icon.png"),
-            os.path.join(self.base_dir, "templates", "logo.png"),
+            _bundled_path("app_icon.png"),
+            _bundled_path("templates", "logo.png"),
         ):
             if os.path.exists(candidate):
                 try:
@@ -1293,8 +1307,8 @@ class App:
         if self._tray_img_off is not None:
             return self._tray_img_off
         for candidate in (
-            os.path.join(self.base_dir, "app_icon.png"),
-            os.path.join(self.base_dir, "templates", "logo.png"),
+            _bundled_path("app_icon.png"),
+            _bundled_path("templates", "logo.png"),
         ):
             if os.path.exists(candidate):
                 try:

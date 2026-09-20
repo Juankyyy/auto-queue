@@ -28,7 +28,9 @@ MANIFEST
 
 # PyInstaller
 *.manifest
+# (se permite el spec del proyecto para builds reproducibles)
 *.spec
+!LoLAutoQueue.spec
 
 # Installer logs
 pip-log.txt
