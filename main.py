@@ -10,6 +10,7 @@ import math
 import os
 import json
 import ctypes
+from datetime import datetime, timedelta
 from PIL import Image, ImageDraw, ImageTk
 import pystray
 from pystray import MenuItem as TrayItem, Menu as TrayMenu
@@ -41,37 +42,76 @@ WHITE     = "#F0F6FC"
 
 
 class AnimatedDot(tk.Canvas):
-    """Círculo pulsante que indica el estado del bot."""
+    """Indicador de estado con halo expansivo suave (doble ripple + respiración)."""
 
-    def __init__(self, parent, size=14, **kwargs):
+    def __init__(self, parent, size=22, **kwargs):
         super().__init__(parent, width=size, height=size,
                          bg=CARD, highlightthickness=0, **kwargs)
         self.size = size
         self.active = False
-        self._pulse_step = 0
-        self._dot = None
-        self._draw(RED)
+        self._phase = 0.0
+        self._job = None
+        self._draw_idle()
 
-    def _draw(self, color, radius_factor=1.0):
+    @staticmethod
+    def _blend(fg, bg, t):
+        """Mezcla dos colores hex; t=0 -> fg, t=1 -> bg (simula alfa sobre CARD)."""
+        fg = fg.lstrip("#")
+        bg = bg.lstrip("#")
+        r = int(int(fg[0:2], 16) * (1 - t) + int(bg[0:2], 16) * t)
+        g = int(int(fg[2:4], 16) * (1 - t) + int(bg[2:4], 16) * t)
+        b = int(int(fg[4:6], 16) * (1 - t) + int(bg[4:6], 16) * t)
+        return f"#{r:02X}{g:02X}{b:02X}"
+
+    def _draw_idle(self):
         self.delete("all")
         c = self.size / 2
-        r = (self.size / 2 - 2) * radius_factor
-        self.create_oval(c - r, c - r, c + r, c + r, fill=color, outline="")
+        r = 4
+        self.create_oval(c - r, c - r, c + r, c + r, fill=RED, outline="")
 
     def set_active(self, active: bool):
         self.active = active
         if active:
-            self._animate()
+            if self._job is None:
+                self._animate()
         else:
-            self._draw(RED)
+            if self._job is not None:
+                try:
+                    self.after_cancel(self._job)
+                except Exception:
+                    pass
+                self._job = None
+            self._draw_idle()
 
     def _animate(self):
         if not self.active:
+            self._job = None
             return
-        self._pulse_step += 0.12
-        factor = 0.75 + 0.25 * math.sin(self._pulse_step)
-        self._draw(GREEN, radius_factor=factor)
-        self.after(50, self._animate)
+        self._phase = (self._phase + 0.04) % 1.0
+        self.delete("all")
+        c = self.size / 2
+        max_r = c - 1
+
+        # Ondas expansivas (dos, desfasadas, con easing de salida)
+        for offset in (0.0, 0.5):
+            p = (self._phase + offset) % 1.0
+            eased = 1.0 - (1.0 - p) ** 2
+            rr = 5.0 + eased * (max_r - 5.0)
+            color = self._blend(GREEN, CARD, min(1.0, 0.15 + 0.85 * p))
+            self.create_oval(c - rr, c - rr, c + rr, c + rr,
+                             outline=color, width=2)
+
+        # Resplandor suave bajo el núcleo
+        glow_r = 6.5
+        self.create_oval(c - glow_r, c - glow_r, c + glow_r, c + glow_r,
+                         fill=self._blend(GREEN, CARD, 0.78), outline="")
+
+        # Núcleo con respiración gentil
+        core_r = 4.1 * (0.94 + 0.06 * math.sin(self._phase * 2 * math.pi))
+        self.create_oval(c - core_r, c - core_r, c + core_r, c + core_r,
+                         fill=GREEN, outline="")
+
+        self._job = self.after(30, self._animate)
 
 
 class GlowButton(tk.Canvas):
@@ -244,6 +284,12 @@ class App:
         self._settings_win = None
         self._tray_icon = None
         self._window_visible = True
+        # Estadísticas de uso (persistentes en stats.json)
+        self._stats_path = os.path.join(self.base_dir, "stats.json")
+        self._stats = self._load_stats()
+        self._session_start = None
+        self._stats_win = None
+        self._stats_period = "day"
         # Variantes del icono según estado (normal / activo con punto verde)
         self._tray_img_off = None
         self._tray_img_on = None
@@ -294,6 +340,13 @@ class App:
         tb_cfg.bind("<Enter>", lambda _: tb_cfg.config(bg=BORDER, fg=GOLD))
         tb_cfg.bind("<Leave>", lambda _: tb_cfg.config(bg=BG, fg=TEXT_DIM))
 
+        tb_stats = tk.Label(titlebar, text="📊", font=("Cascadia Code", 10),
+                            fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
+        tb_stats.pack(side="right", fill="y")
+        tb_stats.bind("<Button-1>", self._open_stats)
+        tb_stats.bind("<Enter>", lambda _: tb_stats.config(bg=BORDER, fg=CYAN))
+        tb_stats.bind("<Leave>", lambda _: tb_stats.config(bg=BG, fg=TEXT_DIM))
+
         # ── Header ──────────────────────────────
         header = tk.Frame(root, bg=BG)
         header.pack(fill="x", padx=24, pady=(10, 10))
@@ -333,7 +386,7 @@ class App:
         left = tk.Frame(status_card, bg=CARD)
         left.pack(side="left", padx=16, pady=14)
 
-        self.dot = AnimatedDot(left, size=12)
+        self.dot = AnimatedDot(left, size=22)
         self.dot.pack(side="left")
 
         self.status_lbl = tk.Label(left, text="INACTIVO",
@@ -601,6 +654,192 @@ class App:
         win.after(10, lambda: (win.lift(), win.focus_force())
                  if win.winfo_exists() else None)
 
+    # ──────────────────────────────────────────
+    # Ventana de Estadísticas
+    # ──────────────────────────────────────────
+
+    def _open_stats(self, _=None):
+        if self._stats_win is not None and self._stats_win.winfo_exists():
+            self._stats_win.lift()
+            self._stats_win.focus_force()
+            return
+
+        win = tk.Toplevel(self.root)
+        self._stats_win = win
+        win.title("Estadísticas - LoL Auto Queue")
+        win.resizable(False, False)
+        win.configure(bg=BG)
+        win.overrideredirect(True)
+        win.transient(self.root)
+
+        W, H = 350, 600
+        self.root.update_idletasks()
+        rx, ry = self.root.winfo_x(), self.root.winfo_y()
+        rw, rh = self.root.winfo_width(), self.root.winfo_height()
+        x = rx + (rw - W) // 2
+        y = ry + (rh - H) // 2
+        win.geometry(f"{W}x{H}+{max(0, x)}+{max(0, y)}")
+
+        self._apply_frameless_style(win)
+
+        drag = {"x": 0, "y": 0}
+
+        def _s_start_move(event):
+            drag["x"] = event.x_root - win.winfo_x()
+            drag["y"] = event.y_root - win.winfo_y()
+
+        def _s_on_move(event):
+            win.geometry(f"+{event.x_root - drag['x']}+{event.y_root - drag['y']}")
+
+        # ── Barra de título personalizada ──
+        titlebar = tk.Frame(win, bg=BG, height=36)
+        titlebar.pack(fill="x", side="top")
+        titlebar.pack_propagate(False)
+        titlebar.bind("<ButtonPress-1>", _s_start_move)
+        titlebar.bind("<B1-Motion>", _s_on_move)
+
+        tb_title = tk.Label(titlebar, text="Estadísticas",
+                            font=("Cascadia Code", 9), fg=TEXT_DIM, bg=BG)
+        tb_title.pack(side="left", padx=12)
+        tb_title.bind("<ButtonPress-1>", _s_start_move)
+        tb_title.bind("<B1-Motion>", _s_on_move)
+
+        tb_close = tk.Label(titlebar, text="✕", font=("Segoe UI Symbol", 10, "bold"),
+                            fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
+        tb_close.pack(side="right", fill="y")
+        tb_close.bind("<Button-1>", lambda _: win.destroy())
+        tb_close.bind("<Enter>", lambda _: tb_close.config(bg=RED, fg=WHITE))
+        tb_close.bind("<Leave>", lambda _: tb_close.config(bg=BG, fg=TEXT_DIM))
+
+        # Encabezado
+        header = tk.Frame(win, bg=BG)
+        header.pack(fill="x", padx=20, pady=(6, 4))
+        tk.Label(header, text="📊  ESTADÍSTICAS", font=("Cascadia Code", 12, "bold"),
+                 fg=GOLD, bg=BG).pack(side="left")
+        self._stats_period_lbl = tk.Label(header, text="", font=("Cascadia Code", 9),
+                                          fg=TEXT_DIM, bg=BG)
+        self._stats_period_lbl.pack(side="right")
+
+        Divider(win).pack(fill="x", padx=20, pady=(6, 12))
+
+        # ── Selector de periodo ──
+        per_card = tk.Frame(win, bg=CARD)
+        per_card.pack(fill="x", padx=20, pady=0)
+        tk.Label(per_card, text="PERIODO",
+                 font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=CARD
+                 ).pack(anchor="w", padx=16, pady=(12, 8))
+
+        per_row = tk.Frame(per_card, bg=CARD)
+        per_row.pack(fill="x", padx=16, pady=(0, 12))
+
+        self._period_btns = {}
+        for key, txt in (("day", "Día"), ("week", "Semana"),
+                         ("month", "Mes"), ("year", "Año")):
+            btn = tk.Label(per_row, text=txt, font=("Cascadia Code", 9, "bold"),
+                           cursor="hand2", pady=7)
+            btn.pack(side="left", fill="x", expand=True,
+                     padx=(0, 4) if key != "year" else (0, 0))
+            btn.bind("<Button-1>", lambda _, k=key: self._select_period(k))
+            self._period_btns[key] = btn
+
+        # ── Tarjeta de valores ──
+        stats_card = tk.Frame(win, bg=CARD)
+        stats_card.pack(fill="x", padx=20, pady=(10, 0))
+
+        self._stats_values = {}
+        for key, label, color in (
+            ("matches", "🎮  Partidas aceptadas", CYAN),
+            ("activations", "▶  Veces activado", WHITE),
+            ("time", "⏱  Tiempo activo", GREEN),
+            ("avg_act", "📈  Promedio por activación", WHITE),
+            ("avg_sess", "⏳  Sesión promedio", WHITE),
+            ("live", "🟢  Sesión actual", GREEN),
+        ):
+            row = tk.Frame(stats_card, bg=CARD)
+            row.pack(fill="x", padx=16, pady=5)
+            tk.Label(row, text=label, font=("Cascadia Code", 9),
+                     fg=TEXT_DIM, bg=CARD).pack(side="left")
+            val = tk.Label(row, text="—", font=("Cascadia Code", 10, "bold"),
+                           fg=color, bg=CARD)
+            val.pack(side="right")
+            self._stats_values[key] = val
+        tk.Frame(stats_card, bg=CARD, height=8).pack()
+
+        # ── Restablecer ──
+        reset_btn = tk.Label(win, text="↺  Restablecer estadísticas",
+                             font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=BORDER,
+                             cursor="hand2", pady=8)
+        reset_btn.pack(fill="x", padx=20, pady=(10, 0))
+        reset_state = {"confirm": False}
+
+        def _do_reset(_=None):
+            if not reset_state["confirm"]:
+                reset_state["confirm"] = True
+                reset_btn.config(text="¿Tocar de nuevo para confirmar?", fg=RED)
+                win.after(3000, lambda: (reset_state.update(confirm=False),
+                                         reset_btn.config(
+                                             text="↺  Restablecer estadísticas",
+                                             fg=TEXT_DIM))
+                          if win.winfo_exists() else None)
+                return
+            self._stats = {"activations": [], "matches": [], "sessions": []}
+            self._save_stats()
+            reset_state["confirm"] = False
+            reset_btn.config(text="↺  Restablecer estadísticas", fg=TEXT_DIM)
+            self._refresh_stats_win()
+            self._log("📊 Estadísticas restablecidas.")
+
+        reset_btn.bind("<Button-1>", _do_reset)
+        reset_btn.bind("<Enter>", lambda _: reset_btn.config(bg="#2D333B", fg=WHITE)
+                       if not reset_state["confirm"] else None)
+        reset_btn.bind("<Leave>", lambda _: reset_btn.config(bg=BORDER, fg=TEXT_DIM)
+                       if not reset_state["confirm"] else None)
+
+        win.update_idletasks()
+        win.deiconify()
+        win.lift()
+        win.focus_force()
+        win.after(10, lambda: (win.lift(), win.focus_force())
+                 if win.winfo_exists() else None)
+
+        self._select_period(self._stats_period)
+        self._stats_tick(win)
+
+    def _select_period(self, period):
+        self._stats_period = period
+        for key, btn in getattr(self, "_period_btns", {}).items():
+            if key == period:
+                btn.config(bg="#152636", fg=CYAN)
+            else:
+                btn.config(bg=BORDER, fg=TEXT_DIM)
+        self._refresh_stats_win()
+
+    def _refresh_stats_win(self):
+        if self._stats_win is None or not self._stats_win.winfo_exists():
+            return
+        try:
+            data = self._stats_for(self._stats_period)
+            self._stats_period_lbl.config(text=data["label"])
+            vals = self._stats_values
+            vals["matches"].config(text=str(data["matches"]))
+            vals["activations"].config(text=str(data["activations"]))
+            vals["time"].config(text=self._fmt_duration(data["seconds"]))
+            vals["avg_act"].config(text=f"{data['avg_per_activation']:.1f}")
+            vals["avg_sess"].config(text=self._fmt_duration(data["avg_session"]))
+            vals["live"].config(text=self._fmt_duration(data["live"])
+                                if data["live"] > 0 else "—")
+        except Exception:
+            pass
+
+    def _stats_tick(self, win):
+        try:
+            if not win.winfo_exists():
+                return
+        except Exception:
+            return
+        self._refresh_stats_win()
+        win.after(1000, lambda: self._stats_tick(win))
+
     def _make_slider(self, parent, label, var_name, lbl_name,
                      from_, to, resolution, default, fmt):
         row = tk.Frame(parent, bg=CARD)
@@ -646,9 +885,13 @@ class App:
         if self.bot_active:
             self.bot.stop()
             self.bot_active = False
+            self._close_session()
             self._update_status(False)
         else:
             self.bot_active = True
+            self._session_start = datetime.now()
+            self._stats["activations"].append(self._session_start.isoformat())
+            self._save_stats()
             self._update_status(True)
             self.bot.delay = self.delay_val.get()
             self.bot.threshold = self.thresh_val.get()
@@ -679,11 +922,14 @@ class App:
 
     def _on_partida_aceptada(self, auto_deactivated=True):
         count = self.bot.partidas_aceptadas
+        self._stats["matches"].append(datetime.now().isoformat())
+        self._save_stats()
         def _update():
             self.count_lbl.config(text=f"Partidas aceptadas: {count}")
             if auto_deactivated:
                 self.bot_active = False
                 self._update_status(False)
+                self._close_session()
                 self._log("🔒 Bot desactivado automáticamente tras aceptar.")
             else:
                 self._log("🔄 Bot continúa activo por si se cancela la cola.")
@@ -764,6 +1010,128 @@ class App:
         except Exception:
             pass
 
+    # ──────────────────────────────────────────
+    # Estadísticas de uso (stats.json)
+    # ──────────────────────────────────────────
+
+    _MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio",
+              "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+
+    def _load_stats(self):
+        """Lee stats.json; estructura válida o vacía si falta/es inválido."""
+        stats = {"activations": [], "matches": [], "sessions": []}
+        try:
+            with open(self._stats_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                for key in stats:
+                    val = data.get(key, [])
+                    if isinstance(val, list):
+                        stats[key] = val
+        except Exception:
+            pass
+        return stats
+
+    def _save_stats(self):
+        """Guarda los eventos de uso en stats.json."""
+        try:
+            with open(self._stats_path, "w", encoding="utf-8") as f:
+                json.dump(self._stats, f, indent=2)
+        except Exception:
+            pass
+
+    def _close_session(self):
+        """Cierra la sesión activa actual y la persiste."""
+        if self._session_start is None:
+            return
+        try:
+            end = datetime.now()
+            self._stats["sessions"].append({
+                "start": self._session_start.isoformat(),
+                "end": end.isoformat(),
+                "seconds": round((end - self._session_start).total_seconds(), 1),
+            })
+            self._save_stats()
+        except Exception:
+            pass
+        finally:
+            self._session_start = None
+
+    @staticmethod
+    def _parse_ts(value):
+        try:
+            return datetime.fromisoformat(value)
+        except Exception:
+            return None
+
+    @classmethod
+    def _period_bounds(cls, period, ref=None):
+        """Devuelve (inicio, fin, etiqueta) del periodo calendario que contiene a ref."""
+        ref = ref or datetime.now()
+        if period == "week":
+            start = datetime(ref.year, ref.month, ref.day) - timedelta(days=ref.weekday())
+            end = start + timedelta(days=7)
+            label = (f"{start.day} – {end.day - 1} "
+                     f"{cls._MESES[start.month - 1]} {start.year}")
+        elif period == "month":
+            start = datetime(ref.year, ref.month, 1)
+            end = datetime(ref.year + (ref.month == 12), ref.month % 12 + 1, 1)
+            label = f"{cls._MESES[ref.month - 1]} {ref.year}"
+        elif period == "year":
+            start = datetime(ref.year, 1, 1)
+            end = datetime(ref.year + 1, 1, 1)
+            label = str(ref.year)
+        else:  # day
+            start = datetime(ref.year, ref.month, ref.day)
+            end = start + timedelta(days=1)
+            label = f"{start.day} {cls._MESES[start.month - 1]} {start.year}"
+        return start, end, label
+
+    def _stats_for(self, period):
+        """Agrega eventos del periodo: partidas, activaciones y tiempo activo."""
+        start, end, label = self._period_bounds(period)
+        matches = sum(1 for ts in self._stats["matches"]
+                      if (dt := self._parse_ts(ts)) is not None and start <= dt < end)
+        activations = sum(1 for ts in self._stats["activations"]
+                          if (dt := self._parse_ts(ts)) is not None and start <= dt < end)
+        seconds, sessions = 0.0, 0
+        for s in self._stats["sessions"]:
+            s0 = self._parse_ts(s.get("start", ""))
+            s1 = self._parse_ts(s.get("end", ""))
+            if s0 is None or s1 is None:
+                continue
+            overlap = (min(s1, end) - max(s0, start)).total_seconds()
+            if overlap > 0:
+                seconds += overlap
+                sessions += 1
+        live = 0.0
+        if self.bot_active and self._session_start is not None:
+            live = max(0.0, (min(datetime.now(), end) - max(self._session_start, start)
+                              ).total_seconds())
+            seconds += live
+        return {
+            "label": label,
+            "matches": matches,
+            "activations": activations,
+            "seconds": seconds,
+            "sessions": sessions,
+            "live": live,
+            "avg_per_activation": (matches / activations) if activations else 0.0,
+            "avg_session": (seconds / sessions) if sessions else 0.0,
+        }
+
+    @staticmethod
+    def _fmt_duration(seconds):
+        """Formatea segundos como '2 h 15 min', '45 min 10 s' o '35 s'."""
+        seconds = int(max(0, seconds))
+        h, rem = divmod(seconds, 3600)
+        m, s = divmod(rem, 60)
+        if h:
+            return f"{h} h {m} min" if m else f"{h} h"
+        if m:
+            return f"{m} min {s} s" if s else f"{m} min"
+        return f"{s} s"
+
     def _apply_frameless_style(self, window=None):
         """Mantiene el icono en la barra de tareas y esquinas redondeadas en Win11."""
         target = window if window is not None else self.root
@@ -819,6 +1187,7 @@ class App:
         try:
             if self.bot_active:
                 self.bot.stop()
+            self._close_session()
         except Exception:
             pass
         try:

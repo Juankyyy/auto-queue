@@ -85,3 +85,5 @@ $RECYCLE.BIN/
 
 # App local settings (persistencia de ajustes por usuario)
 config.json
+# App usage stats (persistencia de estadísticas por usuario)
+stats.json
