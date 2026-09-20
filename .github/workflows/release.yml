@@ -1,9 +1,24 @@
 name: Release EXE
 
+<<<<<<< Updated upstream
 on:
   push:
     tags:
       - "v*"
+=======
+# Se dispara solo (al pushear un tag desde tu PC) o manual
+# (Actions > Release EXE > Run workflow > tag: 0.1.1).
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "[0-9]*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag existente a publicar/reconstruir (ej. 0.1.1)"
+        required: true
+>>>>>>> Stashed changes
 
 permissions:
   contents: write
@@ -12,8 +27,26 @@ jobs:
   build-windows-exe:
     runs-on: windows-latest
     steps:
+<<<<<<< Updated upstream
       - name: Checkout
         uses: actions/checkout@v4
+=======
+      - name: Checkout del tag (historial completo para el changelog)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+>>>>>>> Stashed changes
+
+      - name: Resolver TAG
+        id: tag
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "value=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Python 3.12
         uses: actions/setup-python@v5
@@ -36,11 +69,36 @@ jobs:
           Get-ChildItem dist/
           if (!(Test-Path "dist/LoLAutoQueue.exe")) { throw "No se generó dist/LoLAutoQueue.exe" }
 
+<<<<<<< Updated upstream
+=======
+      - name: Generar notas de la release
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.tag.outputs.value }}"
+          # Notas personalizadas = mensaje del tag anotado (lo escribe el workflow Auto Release)
+          $tagMsg = (git tag -l --format='%(contents)' $tag | Out-String).Trim()
+          # Tag anterior para listar solo los cambios nuevos
+          $prev = (git describe --tags --abbrev=0 "$tag^" 2>$null | Out-String).Trim()
+          if ($prev) { $range = "$prev..$tag" } else { $range = $tag }
+          $log = (git log $range --pretty=format:'- %s (%h)' --reverse | Out-String).Trim()
+          $body = ""
+          if ($tagMsg) { $body += "## Novedades`r`n`r`n$tagMsg`r`n`r`n" }
+          $body += "## Cambios`r`n`r`n$log"
+          Set-Content -Path RELEASE_NOTES.md -Value $body -Encoding UTF8
+          Get-Content RELEASE_NOTES.md
+
+>>>>>>> Stashed changes
       - name: Create GitHub Release with EXE
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.value }}
           files: dist/LoLAutoQueue.exe
+<<<<<<< Updated upstream
           generate_release_notes: true
+=======
+          name: LoL Auto Queue ${{ steps.tag.outputs.value }}
+          body_path: RELEASE_NOTES.md
+>>>>>>> Stashed changes
           draft: false
           prerelease: false
         env:
