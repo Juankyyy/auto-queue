@@ -8,8 +8,9 @@ import threading
 import time
 import math
 import os
+import json
 import ctypes
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 import pystray
 from pystray import MenuItem as TrayItem, Menu as TrayMenu
 from bot import LoLAutoAccept
@@ -204,16 +205,20 @@ class App:
         self.root.overrideredirect(True)
         self._drag_x = 0
         self._drag_y = 0
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        self._config_path = os.path.join(self.base_dir, "config.json")
 
         self._center_window(390, 540)
         self._apply_frameless_style()
 
-        # Configurar icono de ventana y barra de tareas
-        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        # Configurar icono de ventana y barra de tareas (nuevo icono primero)
         ico_path = os.path.join(self.base_dir, "app_icon.ico")
-        logo_path = os.path.join(self.base_dir, "templates", "logo.png")
-        if not os.path.exists(logo_path):
-            logo_path = os.path.join(self.base_dir, "app_icon.png")
+        logo_path = None
+        for candidate in (os.path.join(self.base_dir, "app_icon.png"),
+                          os.path.join(self.base_dir, "templates", "logo.png")):
+            if os.path.exists(candidate):
+                logo_path = candidate
+                break
 
         if os.path.exists(ico_path):
             try:
@@ -221,23 +226,29 @@ class App:
             except Exception:
                 pass
 
-        if os.path.exists(logo_path):
+        if logo_path is not None:
             try:
                 self._icon_img = ImageTk.PhotoImage(file=logo_path)
                 self.root.iconphoto(True, self._icon_img)
             except Exception:
                 pass
 
-        # Estado y variables de configuración
+        # Estado y variables de configuración (persistentes en config.json)
+        saved = self._load_config()
         self.bot_active = False
         self.bot_thread = None
-        self.delay_val = tk.DoubleVar(value=0.5)
-        self.thresh_val = tk.DoubleVar(value=0.80)
-        self.auto_deactivate_var = tk.BooleanVar(value=True)
-        self.close_to_tray_var = tk.BooleanVar(value=True)
+        self.delay_val = tk.DoubleVar(value=saved["delay"])
+        self.thresh_val = tk.DoubleVar(value=saved["threshold"])
+        self.auto_deactivate_var = tk.BooleanVar(value=saved["auto_deactivate"])
+        self.close_to_tray_var = tk.BooleanVar(value=saved["close_to_tray"])
         self._settings_win = None
         self._tray_icon = None
         self._window_visible = True
+        # Variantes del icono según estado (normal / activo con punto verde)
+        self._tray_img_off = None
+        self._tray_img_on = None
+        self._taskbar_photos_off = []
+        self._taskbar_photos_on = []
 
         self.bot = LoLAutoAccept(
             log_callback=self._log,
@@ -268,20 +279,13 @@ class App:
         tb_title.bind("<ButtonPress-1>", self._start_move)
         tb_title.bind("<B1-Motion>", self._on_move)
 
-        # Botones arriba a la derecha: Ajustes, Minimizar y Cerrar
+        # Botones arriba a la derecha: Ajustes y Cerrar
         tb_close = tk.Label(titlebar, text="✕", font=("Segoe UI", 10, "bold"),
                             fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
         tb_close.pack(side="right", fill="y")
         tb_close.bind("<Button-1>", lambda _: self._close_app())
         tb_close.bind("<Enter>", lambda _: tb_close.config(bg=RED, fg=WHITE))
         tb_close.bind("<Leave>", lambda _: tb_close.config(bg=BG, fg=TEXT_DIM))
-
-        tb_min = tk.Label(titlebar, text="─", font=("Segoe UI", 10),
-                          fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
-        tb_min.pack(side="right", fill="y")
-        tb_min.bind("<Button-1>", lambda _: root.iconify())
-        tb_min.bind("<Enter>", lambda _: tb_min.config(bg=BORDER, fg=WHITE))
-        tb_min.bind("<Leave>", lambda _: tb_min.config(bg=BG, fg=TEXT_DIM))
 
         tb_cfg = tk.Label(titlebar, text="⚙", font=("Segoe UI", 11),
                           fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
@@ -294,18 +298,21 @@ class App:
         header = tk.Frame(root, bg=BG)
         header.pack(fill="x", padx=24, pady=(10, 10))
 
-        # Logo de la app desde templates/logo.png
-        logo_path = os.path.join(self.base_dir, "templates", "logo.png")
+        # Logo de la app (nuevo icono primero)
         logo_loaded = False
-        if os.path.exists(logo_path):
+        for logo_path in (os.path.join(self.base_dir, "app_icon.png"),
+                          os.path.join(self.base_dir, "templates", "logo.png")):
+            if not os.path.exists(logo_path):
+                continue
             try:
                 pil_logo = Image.open(logo_path).resize((46, 46), Image.Resampling.LANCZOS)
                 self.header_logo = ImageTk.PhotoImage(pil_logo)
                 logo_lbl = tk.Label(header, image=self.header_logo, bg=BG)
                 logo_lbl.pack(side="left")
                 logo_loaded = True
+                break
             except Exception:
-                logo_loaded = False
+                continue
 
         if not logo_loaded:
             HexIcon(header, size=46).pack(side="left")
@@ -503,11 +510,13 @@ class App:
             self.auto_deactivate_var.set(True)
             self.bot.auto_deactivate = True
             update_beh_ui()
+            self._save_config()
 
         def select_keep(_=None):
             self.auto_deactivate_var.set(False)
             self.bot.auto_deactivate = False
             update_beh_ui()
+            self._save_config()
 
         btn_deact.bind("<Button-1>", select_deact)
         btn_keep.bind("<Button-1>", select_keep)
@@ -572,10 +581,12 @@ class App:
         def select_quit(_=None):
             self.close_to_tray_var.set(False)
             update_close_ui()
+            self._save_config()
 
         def select_tray(_=None):
             self.close_to_tray_var.set(True)
             update_close_ui()
+            self._save_config()
 
         btn_quit.bind("<Button-1>", select_quit)
         btn_tray.bind("<Button-1>", select_tray)
@@ -615,6 +626,7 @@ class App:
                 self.bot.delay = float(v)
             else:
                 self.bot.threshold = float(v)
+            self._save_config()
 
         scale = tk.Scale(
             parent, from_=from_, to=to, resolution=resolution,
@@ -662,6 +674,7 @@ class App:
             self.status_lbl.config(text="ACTIVO", fg=GREEN)
         else:
             self.status_lbl.config(text="INACTIVO", fg=RED)
+        self._apply_status_icons(active)
         self._refresh_tray_menu()
 
     def _on_partida_aceptada(self, auto_deactivated=True):
@@ -716,6 +729,40 @@ class App:
         x = (sw - w) // 2
         y = (sh - h) // 2
         self.root.geometry(f"{w}x{h}+{x}+{y}")
+
+    # ──────────────────────────────────────────
+    # Configuración persistente (config.json)
+    # ──────────────────────────────────────────
+
+    def _load_config(self):
+        """Lee config.json con valores validados; usa defaults si falta o es inválido."""
+        cfg = {"delay": 0.5, "threshold": 0.80,
+               "auto_deactivate": True, "close_to_tray": True}
+        try:
+            with open(self._config_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                cfg["delay"] = min(3.0, max(0.1, float(data.get("delay", cfg["delay"]))))
+                cfg["threshold"] = min(0.99, max(0.50, float(data.get("threshold", cfg["threshold"]))))
+                cfg["auto_deactivate"] = bool(data.get("auto_deactivate", cfg["auto_deactivate"]))
+                cfg["close_to_tray"] = bool(data.get("close_to_tray", cfg["close_to_tray"]))
+        except Exception:
+            pass
+        return cfg
+
+    def _save_config(self):
+        """Guarda los ajustes actuales en config.json."""
+        try:
+            data = {
+                "delay": round(float(self.delay_val.get()), 2),
+                "threshold": round(float(self.thresh_val.get()), 2),
+                "auto_deactivate": bool(self.auto_deactivate_var.get()),
+                "close_to_tray": bool(self.close_to_tray_var.get()),
+            }
+            with open(self._config_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception:
+            pass
 
     def _apply_frameless_style(self, window=None):
         """Mantiene el icono en la barra de tareas y esquinas redondeadas en Win11."""
@@ -788,11 +835,62 @@ class App:
     # Bandeja del sistema (system tray)
     # ──────────────────────────────────────────
 
-    def _tray_image(self):
-        """Icono para la bandeja (64x64)."""
+    def _base_icon(self):
+        """Carga el icono nuevo primero (PIL, RGBA)."""
         for candidate in (
-            os.path.join(self.base_dir, "templates", "logo.png"),
             os.path.join(self.base_dir, "app_icon.png"),
+            os.path.join(self.base_dir, "templates", "logo.png"),
+        ):
+            if os.path.exists(candidate):
+                try:
+                    return Image.open(candidate).convert("RGBA")
+                except Exception:
+                    pass
+        return Image.new("RGBA", (256, 256), (200, 155, 60, 255))
+
+    @staticmethod
+    def _badged_size(base, size):
+        """Variante 'activo': base reescalada a `size` y punto dibujado a ese
+        tamaño final (bordes nítidos, sin doble reescalado)."""
+        img = base.resize((size, size), Image.Resampling.LANCZOS)
+        s = size / 256.0
+        margin = max(1, int(round(10 * s)))
+        r_out = max(2, int(round(38 * s)))
+        r_in = max(1, int(round(29 * s)))
+        cx = cy = size - margin - r_out
+        draw = ImageDraw.Draw(img)
+        draw.ellipse([cx - r_out, cy - r_out, cx + r_out, cy + r_out],
+                     fill=(13, 17, 23, 255))
+        draw.ellipse([cx - r_in, cy - r_in, cx + r_in, cy + r_in],
+                     fill=(0, 230, 118, 255))
+        return img
+
+    def _build_status_icons(self):
+        """Prepara variantes inactivo/activo a máxima resolución."""
+        try:
+            base = self._base_icon()  # resolución nativa (523px)
+            self._tray_img_off = base.resize((64, 64), Image.Resampling.LANCZOS)
+            self._tray_img_on = self._badged_size(base, 64)
+            try:
+                # Varios tamaños para que Windows no tenga que reescalar
+                self._taskbar_photos_off = [
+                    ImageTk.PhotoImage(base.resize((s, s), Image.Resampling.LANCZOS))
+                    for s in (16, 24, 32, 48)]
+                self._taskbar_photos_on = [
+                    ImageTk.PhotoImage(self._badged_size(base, s))
+                    for s in (16, 24, 32, 48)]
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _tray_image(self):
+        """Icono para la bandeja (64x64). Usa el icono nuevo primero."""
+        if self._tray_img_off is not None:
+            return self._tray_img_off
+        for candidate in (
+            os.path.join(self.base_dir, "app_icon.png"),
+            os.path.join(self.base_dir, "templates", "logo.png"),
         ):
             if os.path.exists(candidate):
                 try:
@@ -802,23 +900,46 @@ class App:
                     pass
         return Image.new("RGBA", (64, 64), (200, 155, 60, 255))
 
+    def _apply_status_icons(self, active: bool):
+        """Punto verde en bandeja + barra de tareas + tooltip según estado.
+
+        Solo se usa iconphoto (nítido). El iconbitmap del .ico se deja fijo
+        desde el arranque: intercambiarlo en caliente pixelaba la barra.
+        """
+        try:
+            if self._tray_icon is not None:
+                img = self._tray_img_on if active else self._tray_img_off
+                if img is not None:
+                    self._tray_icon.icon = img
+                self._tray_icon.title = (
+                    "LoL Auto Queue — ACTIVO" if active
+                    else "LoL Auto Queue — INACTIVO")
+        except Exception:
+            pass
+        try:
+            photos = self._taskbar_photos_on if active else self._taskbar_photos_off
+            if photos:
+                self.root.iconphoto(True, *photos)
+        except Exception:
+            pass
+
     def _setup_tray(self):
         try:
+            self._build_status_icons()
             menu = TrayMenu(
+                TrayItem('Mostrar ventana',
+                         lambda icon, _: self.root.after(0, self._show_window),
+                         default=True, visible=False),
                 TrayItem(
                     lambda _: "Desactivar bot" if self.bot_active else "Activar bot",
-                    lambda icon, _: self.root.after(0, self._toggle),
-                    default=True),
-                TrayItem(
-                    lambda _: "Ocultar ventana" if self._window_visible else "Mostrar ventana",
-                    lambda icon, _: self.root.after(0, self._toggle_window_visibility)),
+                    lambda icon, _: self.root.after(0, self._toggle)),
                 TrayItem("Abrir configuraciones",
                          lambda icon, _: self.root.after(0, self._open_settings)),
                 TrayItem("Cerrar", lambda icon, _: self.root.after(0, self._quit_app)),
             )
             self._tray_icon = pystray.Icon(
                 "LoL Auto Queue", self._tray_image(),
-                "LoL Auto Queue", menu)
+                "LoL Auto Queue — INACTIVO", menu)
             threading.Thread(target=self._tray_icon.run, daemon=True).start()
             self.root.bind("<Map>", lambda _: self._on_window_map())
             self.root.bind("<Unmap>", lambda _: self._on_window_unmap())
@@ -831,12 +952,6 @@ class App:
                 self._tray_icon.update_menu()
         except Exception:
             pass
-
-    def _toggle_window_visibility(self):
-        if self._window_visible:
-            self._hide_to_tray()
-        else:
-            self._show_window()
 
     def _on_window_map(self):
         self._window_visible = True
