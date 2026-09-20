@@ -1,0 +1,72 @@
+name: Auto Release (bump + tag)
+
+# Saca una release en 1 clic:
+# Actions > Auto Release > Run workflow > eliges patch/minor/major y las novedades.
+# El workflow sube version.txt, crea el tag y el workflow "Release EXE"
+# compila el .exe y publica la release automáticamente.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Tipo de subida de versión"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      notes:
+        description: "Novedades (aparecen arriba de la lista de cambios)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  bump-and-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (historial completo)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Calcular siguiente versión
+        id: ver
+        shell: bash
+        run: |
+          cur=$(tr -d ' \t\r\n' < version.txt)
+          major=$(echo "$cur" | cut -d. -f1)
+          minor=$(echo "$cur" | cut -d. -f2)
+          patch=$(echo "$cur" | cut -d. -f3)
+          case "${{ inputs.bump }}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            *) patch=$((patch + 1)) ;;
+          esac
+          next="$major.$minor.$patch"
+          echo "current=$cur" >> "$GITHUB_OUTPUT"
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+          echo "Versión: $cur -> $next"
+
+      - name: Actualizar version.txt y pushear
+        shell: bash
+        run: |
+          echo "${{ steps.ver.outputs.next }}" > version.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version.txt
+          git commit -m "release: ${{ steps.ver.outputs.next }}"
+          git push
+
+      - name: Crear y pushear tag (dispara el build del EXE)
+        shell: bash
+        run: |
+          next="${{ steps.ver.outputs.next }}"
+          if [ -n "${{ inputs.notes }}" ]; then
+            git tag -a "$next" -m "${{ inputs.notes }}"
+          else
+            git tag "$next"
+          fi
+          git push origin "$next"
