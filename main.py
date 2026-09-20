@@ -8,6 +8,7 @@ import threading
 import time
 import math
 import os
+import sys
 import json
 import ctypes
 from datetime import datetime, timedelta
@@ -277,6 +278,8 @@ class App:
         saved = self._load_config()
         self.bot_active = False
         self.bot_thread = None
+        self._log_visible = bool(saved.get("log_visible", True))
+        self._win_h_full = 560
         self.delay_val = tk.DoubleVar(value=saved["delay"])
         self.thresh_val = tk.DoubleVar(value=saved["threshold"])
         self.auto_deactivate_var = tk.BooleanVar(value=saved["auto_deactivate"])
@@ -303,6 +306,7 @@ class App:
 
         self._build_ui()
         self._setup_tray()
+        self._set_log_visible(self._log_visible, save=False)
 
     # ──────────────────────────────────────────
     # Construcción de la UI Principal
@@ -346,6 +350,14 @@ class App:
         tb_stats.bind("<Button-1>", self._open_stats)
         tb_stats.bind("<Enter>", lambda _: tb_stats.config(bg=BORDER, fg=CYAN))
         tb_stats.bind("<Leave>", lambda _: tb_stats.config(bg=BG, fg=TEXT_DIM))
+
+        self.tb_log_btn = tk.Label(titlebar, text="📝", font=("Cascadia Code", 10),
+                                   fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
+        self.tb_log_btn.pack(side="right", fill="y")
+        self.tb_log_btn.bind("<Button-1>", lambda _: self._toggle_log())
+        self.tb_log_btn.bind("<Enter>", lambda _: self.tb_log_btn.config(bg=BORDER, fg=GREEN))
+        self.tb_log_btn.bind("<Leave>", lambda _: self.tb_log_btn.config(
+            bg=BG, fg=GREEN if self._log_visible else TEXT_DIM))
 
         # ── Header ──────────────────────────────
         header = tk.Frame(root, bg=BG)
@@ -394,21 +406,17 @@ class App:
                                    fg=RED, bg=CARD)
         self.status_lbl.pack(side="left", padx=(8, 0))
 
-        self.count_lbl = tk.Label(status_card,
-                                  text="Partidas aceptadas: 0",
-                                  font=("Cascadia Code", 10), fg=TEXT_DIM, bg=CARD)
-        self.count_lbl.pack(side="right", padx=16)
-
         # ── Botón toggle ─────────────────────────
         btn_frame = tk.Frame(root, bg=BG)
-        btn_frame.pack(pady=16)
+        btn_frame.pack(pady=(16, 12))
 
         self.toggle_btn = GlowButton(btn_frame, command=self._toggle)
         self.toggle_btn.pack()
 
         # ── Log ──────────────────────────────────
-        log_card = tk.Frame(root, bg=CARD)
-        log_card.pack(fill="both", expand=True, padx=24, pady=(8, 20))
+        self.log_card = tk.Frame(root, bg=CARD)
+        log_card = self.log_card
+        log_card.pack(fill="both", expand=True, padx=24, pady=(0, 20))
 
         tk.Label(log_card, text="REGISTRO",
                  font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=CARD
@@ -881,6 +889,32 @@ class App:
     # Acciones
     # ──────────────────────────────────────────
 
+    def _toggle_log(self):
+        self._set_log_visible(not self._log_visible)
+
+    def _set_log_visible(self, visible, save=True):
+        """Muestra/oculta el registro y compacta la ventana."""
+        self._log_visible = visible
+        try:
+            self.root.update_idletasks()
+            if visible:
+                self.log_card.pack(fill="both", expand=True, padx=24, pady=(0, 20))
+                self.root.update_idletasks()
+                self.root.geometry(f"390x{self._win_h_full or 560}")
+                self.tb_log_btn.config(fg=GREEN)
+            else:
+                cur = self.root.winfo_height()
+                if cur > 200:
+                    self._win_h_full = cur
+                self.log_card.pack_forget()
+                self.root.update_idletasks()
+                self.root.geometry(f"390x{self.root.winfo_reqheight()}")
+                self.tb_log_btn.config(fg=TEXT_DIM)
+        except Exception:
+            pass
+        if save:
+            self._save_config()
+
     def _toggle(self):
         if self.bot_active:
             self.bot.stop()
@@ -921,11 +955,9 @@ class App:
         self._refresh_tray_menu()
 
     def _on_partida_aceptada(self, auto_deactivated=True):
-        count = self.bot.partidas_aceptadas
         self._stats["matches"].append(datetime.now().isoformat())
         self._save_stats()
         def _update():
-            self.count_lbl.config(text=f"Partidas aceptadas: {count}")
             if auto_deactivated:
                 self.bot_active = False
                 self._update_status(False)
@@ -983,7 +1015,8 @@ class App:
     def _load_config(self):
         """Lee config.json con valores validados; usa defaults si falta o es inválido."""
         cfg = {"delay": 0.5, "threshold": 0.80,
-               "auto_deactivate": True, "close_to_tray": True}
+               "auto_deactivate": True, "close_to_tray": True,
+               "log_visible": True}
         try:
             with open(self._config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -992,6 +1025,7 @@ class App:
                 cfg["threshold"] = min(0.99, max(0.50, float(data.get("threshold", cfg["threshold"]))))
                 cfg["auto_deactivate"] = bool(data.get("auto_deactivate", cfg["auto_deactivate"]))
                 cfg["close_to_tray"] = bool(data.get("close_to_tray", cfg["close_to_tray"]))
+                cfg["log_visible"] = bool(data.get("log_visible", cfg["log_visible"]))
         except Exception:
             pass
         return cfg
@@ -1004,6 +1038,7 @@ class App:
                 "threshold": round(float(self.thresh_val.get()), 2),
                 "auto_deactivate": bool(self.auto_deactivate_var.get()),
                 "close_to_tray": bool(self.close_to_tray_var.get()),
+                "log_visible": bool(getattr(self, "_log_visible", True)),
             }
             with open(self._config_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
@@ -1347,6 +1382,28 @@ class App:
         self._window_visible = True
         self._refresh_tray_menu()
 
+    def start_instance_listener(self, sock):
+        """Escucha avisos de segundas instancias para mostrar esta ventana."""
+        def _listen():
+            while True:
+                try:
+                    conn, _ = sock.accept()
+                    try:
+                        conn.recv(16)
+                    except Exception:
+                        pass
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    try:
+                        self.root.after(0, self._show_window)
+                    except Exception:
+                        return
+                except Exception:
+                    return
+        threading.Thread(target=_listen, daemon=True).start()
+
     def run(self):
         try:
             self.root.protocol("WM_DELETE_WINDOW", self._close_app)
@@ -1361,5 +1418,43 @@ class App:
 
 
 # ──────────────────────────────────────────────
+# ──────────────────────────────────────────────
+# Instancia única (una sola copia de la app a la vez)
+# ──────────────────────────────────────────────
+_SINGLE_INSTANCE_PORT = 51237
+
+
+def _try_primary_socket():
+    """Reserva el puerto local. Si está ocupado, avisa a la instancia
+    abierta (para que muestre su ventana) y devuelve None."""
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # Sin SO_REUSEADDR: en Windows permitiría dos binds simultáneos.
+    try:
+        sock.bind(("127.0.0.1", _SINGLE_INSTANCE_PORT))
+        sock.listen(5)
+        return sock
+    except OSError:
+        try:
+            sock.close()
+        except Exception:
+            pass
+        try:
+            conn = socket.create_connection(
+                ("127.0.0.1", _SINGLE_INSTANCE_PORT), timeout=3)
+            try:
+                conn.sendall(b"SHOW")
+            finally:
+                conn.close()
+        except Exception:
+            pass
+        return None
+
+
 if __name__ == "__main__":
-    App().run()
+    _sock = _try_primary_socket()
+    if _sock is None:
+        sys.exit(0)
+    _app = App()
+    _app.start_instance_listener(_sock)
+    _app.run()
