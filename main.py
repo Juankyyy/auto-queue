@@ -10,6 +10,8 @@ import math
 import os
 import ctypes
 from PIL import Image, ImageTk
+import pystray
+from pystray import MenuItem as TrayItem, Menu as TrayMenu
 from bot import LoLAutoAccept
 
 # Identificador de aplicación para que Windows muestre el icono propio en la barra de tareas
@@ -232,7 +234,10 @@ class App:
         self.delay_val = tk.DoubleVar(value=0.5)
         self.thresh_val = tk.DoubleVar(value=0.80)
         self.auto_deactivate_var = tk.BooleanVar(value=True)
+        self.close_to_tray_var = tk.BooleanVar(value=True)
         self._settings_win = None
+        self._tray_icon = None
+        self._window_visible = True
 
         self.bot = LoLAutoAccept(
             log_callback=self._log,
@@ -240,6 +245,7 @@ class App:
         )
 
         self._build_ui()
+        self._setup_tray()
 
     # ──────────────────────────────────────────
     # Construcción de la UI Principal
@@ -375,7 +381,7 @@ class App:
         win = tk.Toplevel(self.root)
         self._settings_win = win
         win.title("Ajustes - LoL Auto Queue")
-        win.geometry("350x546")
+        win.geometry("350x680")
         win.resizable(False, False)
         win.configure(bg=BG)
         win.overrideredirect(True)
@@ -388,8 +394,8 @@ class App:
         rw = self.root.winfo_width()
         rh = self.root.winfo_height()
         x = rx + (rw - 350) // 2
-        y = ry + (rh - 546) // 2
-        win.geometry(f"350x546+{max(0, x)}+{max(0, y)}")
+        y = ry + (rh - 680) // 2
+        win.geometry(f"350x680+{max(0, x)}+{max(0, y)}")
 
         self._apply_frameless_style(win)
 
@@ -528,6 +534,53 @@ class App:
         cal_btn.bind("<Enter>", lambda _: cal_btn.config(bg="#2D333B", fg=WHITE))
         cal_btn.bind("<Leave>", lambda _: cal_btn.config(bg=BORDER, fg=CYAN))
 
+        # Tarjeta 4: Comportamiento al cerrar la app
+        close_card = tk.Frame(win, bg=CARD)
+        close_card.pack(fill="x", padx=20, pady=(0, 10))
+
+        tk.Label(close_card, text="AL CERRAR LA APP",
+                 font=("Segoe UI", 8, "bold"), fg=TEXT_DIM, bg=CARD
+                 ).pack(anchor="w", padx=16, pady=(12, 8))
+
+        close_btns_frame = tk.Frame(close_card, bg=CARD)
+        close_btns_frame.pack(fill="x", padx=16, pady=(0, 8))
+
+        btn_quit = tk.Label(close_btns_frame, text="⏻ Salir",
+                            font=("Segoe UI", 9, "bold"), cursor="hand2",
+                            pady=7, padx=8)
+        btn_quit.pack(side="left", fill="x", expand=True, padx=(0, 4))
+
+        btn_tray = tk.Label(close_btns_frame, text="📥 Bandeja",
+                            font=("Segoe UI", 9, "bold"), cursor="hand2",
+                            pady=7, padx=8)
+        btn_tray.pack(side="right", fill="x", expand=True, padx=(4, 0))
+
+        close_desc = tk.Label(close_card, text="", font=("Segoe UI", 8),
+                              fg=TEXT_DIM, bg=CARD, wraplength=275, justify="left")
+        close_desc.pack(anchor="w", padx=16, pady=(0, 12))
+
+        def update_close_ui():
+            if self.close_to_tray_var.get():
+                btn_tray.config(bg="#152636", fg=CYAN)
+                btn_quit.config(bg=BORDER, fg=TEXT_DIM)
+                close_desc.config(text="La ✕ oculta la ventana y la app sigue en los iconos de Windows.")
+            else:
+                btn_tray.config(bg=BORDER, fg=TEXT_DIM)
+                btn_quit.config(bg="#2E2410", fg=GOLD)
+                close_desc.config(text="La ✕ detiene el bot y cierra la app por completo.")
+
+        def select_quit(_=None):
+            self.close_to_tray_var.set(False)
+            update_close_ui()
+
+        def select_tray(_=None):
+            self.close_to_tray_var.set(True)
+            update_close_ui()
+
+        btn_quit.bind("<Button-1>", select_quit)
+        btn_tray.bind("<Button-1>", select_tray)
+        update_close_ui()
+
         # La ventana recién creada (frameless + transient) puede abrirse
         # detrás de la principal: traerla al frente ya en el primer clic.
         win.update_idletasks()
@@ -590,6 +643,7 @@ class App:
             self.bot.auto_deactivate = self.auto_deactivate_var.get()
             self.bot_thread = threading.Thread(target=self.bot.start, daemon=True)
             self.bot_thread.start()
+        self._refresh_tray_menu()
 
     def _calibrate(self, _=None):
         if self.bot_active:
@@ -608,6 +662,7 @@ class App:
             self.status_lbl.config(text="ACTIVO", fg=GREEN)
         else:
             self.status_lbl.config(text="INACTIVO", fg=RED)
+        self._refresh_tray_menu()
 
     def _on_partida_aceptada(self, auto_deactivated=True):
         count = self.bot.partidas_aceptadas
@@ -707,15 +762,118 @@ class App:
         self.root.geometry(f"+{event.x_root - self._drag_x}+{event.y_root - self._drag_y}")
 
     def _close_app(self):
+        # Según ajustes: ocultar en bandeja o salir del todo
+        if self.close_to_tray_var.get():
+            self._hide_to_tray()
+        else:
+            self._quit_app()
+
+    def _quit_app(self):
         try:
             if self.bot_active:
                 self.bot.stop()
         except Exception:
             pass
-        self.root.destroy()
+        try:
+            if self._tray_icon is not None:
+                self._tray_icon.stop()
+        except Exception:
+            pass
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+
+    # ──────────────────────────────────────────
+    # Bandeja del sistema (system tray)
+    # ──────────────────────────────────────────
+
+    def _tray_image(self):
+        """Icono para la bandeja (64x64)."""
+        for candidate in (
+            os.path.join(self.base_dir, "templates", "logo.png"),
+            os.path.join(self.base_dir, "app_icon.png"),
+        ):
+            if os.path.exists(candidate):
+                try:
+                    img = Image.open(candidate).convert("RGBA")
+                    return img.resize((64, 64), Image.Resampling.LANCZOS)
+                except Exception:
+                    pass
+        return Image.new("RGBA", (64, 64), (200, 155, 60, 255))
+
+    def _setup_tray(self):
+        try:
+            menu = TrayMenu(
+                TrayItem(
+                    lambda _: "Desactivar bot" if self.bot_active else "Activar bot",
+                    lambda icon, _: self.root.after(0, self._toggle),
+                    default=True),
+                TrayItem(
+                    lambda _: "Ocultar ventana" if self._window_visible else "Mostrar ventana",
+                    lambda icon, _: self.root.after(0, self._toggle_window_visibility)),
+                TrayItem("Abrir configuraciones",
+                         lambda icon, _: self.root.after(0, self._open_settings)),
+                TrayItem("Cerrar", lambda icon, _: self.root.after(0, self._quit_app)),
+            )
+            self._tray_icon = pystray.Icon(
+                "LoL Auto Queue", self._tray_image(),
+                "LoL Auto Queue", menu)
+            threading.Thread(target=self._tray_icon.run, daemon=True).start()
+            self.root.bind("<Map>", lambda _: self._on_window_map())
+            self.root.bind("<Unmap>", lambda _: self._on_window_unmap())
+        except Exception as e:
+            self._log(f"⚠️ No se pudo crear el icono de bandeja: {e}", tag="warn")
+
+    def _refresh_tray_menu(self):
+        try:
+            if self._tray_icon is not None:
+                self._tray_icon.update_menu()
+        except Exception:
+            pass
+
+    def _toggle_window_visibility(self):
+        if self._window_visible:
+            self._hide_to_tray()
+        else:
+            self._show_window()
+
+    def _on_window_map(self):
+        self._window_visible = True
+        self._refresh_tray_menu()
+
+    def _on_window_unmap(self):
+        self._window_visible = False
+        self._refresh_tray_menu()
+
+    def _hide_to_tray(self):
+        try:
+            if self._settings_win is not None and self._settings_win.winfo_exists():
+                self._settings_win.withdraw()
+        except Exception:
+            pass
+        self.root.withdraw()
+        self._window_visible = False
+        self._refresh_tray_menu()
+
+    def _show_window(self):
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+        self._window_visible = True
+        self._refresh_tray_menu()
 
     def run(self):
+        try:
+            self.root.protocol("WM_DELETE_WINDOW", self._close_app)
+        except Exception:
+            pass
         self.root.mainloop()
+        try:
+            if self._tray_icon is not None:
+                self._tray_icon.stop()
+        except Exception:
+            pass
 
 
 # ──────────────────────────────────────────────
