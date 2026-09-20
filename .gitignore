@@ -32,6 +32,9 @@ MANIFEST
 *.spec
 !LoLAutoQueue.spec
 
+# Recurso de versión generado por el spec durante el build
+file_version_info.txt
+
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt

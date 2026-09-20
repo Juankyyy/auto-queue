@@ -39,6 +39,15 @@ def _user_data_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def _load_version():
+    """Lee la versión desde version.txt (empaquetado en el .exe)."""
+    try:
+        with open(_bundled_path("version.txt"), "r", encoding="utf-8") as f:
+            return f.read().strip() or "0.0.0-dev"
+    except Exception:
+        return "0.0.0-dev"
+
+
 # ──────────────────────────────────────────────
 # Paleta de colores
 # ──────────────────────────────────────────────
@@ -252,6 +261,7 @@ class Divider(tk.Frame):
 class App:
     def __init__(self):
         self.root = tk.Tk()
+        self.version = _load_version()
         self.root.title("LoL Auto Queue")
         self.root.geometry("390x560")
         self.root.resizable(False, False)
@@ -400,8 +410,6 @@ class App:
         titles.pack(side="left", padx=12)
         tk.Label(titles, text="LoL Auto Queue",
                  font=("Cascadia Code", 16, "bold"), fg=GOLD, bg=BG).pack(anchor="w")
-        tk.Label(titles, text="Acepta partidas automáticamente",
-                 font=("Cascadia Code", 10), fg=TEXT_DIM, bg=BG).pack(anchor="w")
 
         Divider(root).pack(fill="x", padx=24, pady=(0, 0))
 
@@ -422,10 +430,17 @@ class App:
 
         # ── Botón toggle ─────────────────────────
         btn_frame = tk.Frame(root, bg=BG)
-        btn_frame.pack(pady=(16, 12))
+        btn_frame.pack(pady=(16, 20))
 
         self.toggle_btn = GlowButton(btn_frame, command=self._toggle)
         self.toggle_btn.pack()
+
+        # ── Pie con versión ────────────────────────
+        footer = tk.Frame(root, bg=BG)
+        footer.pack(side="bottom", fill="x", padx=24, pady=(10))
+        tk.Label(footer, text=f"v{self.version}",
+                 font=("Cascadia Code", 9), fg=TEXT_DIM, bg=BG).pack(side="right")
+        Divider(root).pack(side="bottom", fill="x")
 
         # ── Log ──────────────────────────────────
         self.log_card = tk.Frame(root, bg=CARD)
