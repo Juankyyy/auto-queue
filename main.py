@@ -39,6 +39,23 @@ def _user_data_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+_MAX_LOG_LINES = 500
+_MAX_STATS_EVENTS = 5000
+
+
+def _atomic_write_json(path, data):
+    """Escritura atómica: tmp + fsync + os.replace para no corromper en cortes."""
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except Exception:
+            pass
+    os.replace(tmp, path)
+
+
 def _load_version():
     """Lee la versión desde version.txt (empaquetado en el .exe)."""
     try:
@@ -1016,6 +1033,12 @@ class App:
         def _write():
             self.log_box.config(state="normal")
             self.log_box.insert("end", line, tag)
+            try:
+                total = int(self.log_box.index("end-1c").split(".")[0])
+                if total > _MAX_LOG_LINES:
+                    self.log_box.delete("1.0", f"{total - _MAX_LOG_LINES}.0")
+            except Exception:
+                pass
             self.log_box.see("end")
             self.log_box.config(state="disabled")
 
@@ -1060,7 +1083,7 @@ class App:
         return cfg
 
     def _save_config(self):
-        """Guarda los ajustes actuales en config.json."""
+        """Guarda los ajustes actuales en config.json (escritura atómica)."""
         try:
             data = {
                 "delay": round(float(self.delay_val.get()), 2),
@@ -1069,8 +1092,7 @@ class App:
                 "close_to_tray": bool(self.close_to_tray_var.get()),
                 "log_visible": bool(getattr(self, "_log_visible", True)),
             }
-            with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+            _atomic_write_json(self._config_path, data)
         except Exception:
             pass
 
@@ -1097,10 +1119,20 @@ class App:
         return stats
 
     def _save_stats(self):
-        """Guarda los eventos de uso en stats.json."""
+        """Guarda los eventos de uso en stats.json (atómico + podado)."""
         try:
-            with open(self._stats_path, "w", encoding="utf-8") as f:
-                json.dump(self._stats, f, indent=2)
+            self._prune_stats()
+            _atomic_write_json(self._stats_path, self._stats)
+        except Exception:
+            pass
+
+    def _prune_stats(self, limit=_MAX_STATS_EVENTS):
+        """Limita el crecimiento sin cota: conserva solo los últimos N eventos."""
+        try:
+            for key in ("activations", "matches", "sessions"):
+                val = self._stats.get(key)
+                if isinstance(val, list) and len(val) > limit:
+                    self._stats[key] = val[-limit:]
         except Exception:
             pass
 

@@ -10,7 +10,8 @@ import os
 import sys
 from PIL import ImageGrab, Image
 
-# Deshabilitar el failsafe de pyautogui (esquina superior izquierda)
+# Failsafe activado a propósito: mover el mouse a la esquina superior
+# izquierda aborta el control automático (medida de seguridad).
 pyautogui.FAILSAFE = True
 
 
@@ -43,10 +44,10 @@ class LoLAutoAccept:
     def __init__(self, log_callback=None, accepted_callback=None):
         """
         log_callback: función que recibe un str para mostrar en el log
-        accepted_callback: función que se llama cuando se acepta una partida
+        accepted_callback: función que recibe un bool (auto_deactivated)
         """
         self.log = log_callback or print
-        self.on_accepted = accepted_callback or (lambda: None)
+        self.on_accepted = accepted_callback or (lambda _: None)
         self.running = False
         self.partidas_aceptadas = 0
         self.delay = 0.5          # segundos antes de hacer clic
@@ -90,7 +91,12 @@ class LoLAutoAccept:
                     actual_delay = max(0.05, self.delay + random.uniform(-0.1, 0.2))
                     self.log(f"✅ ¡Partida encontrada! Aceptando en {actual_delay:.2f}s...")
                     time.sleep(actual_delay)
-                    self._click(location)
+                    try:
+                        self._click(location)
+                    except pyautogui.FailSafeException:
+                        self.log("⚠️ Failsafe de pyautogui: mouse en la esquina, bot detenido.")
+                        self.running = False
+                        break
                     self.partidas_aceptadas += 1
                     self.log(f"🎮 Partida #{self.partidas_aceptadas} aceptada.")
 
@@ -104,6 +110,10 @@ class LoLAutoAccept:
                         # Esperar a que la ventana de diálogo desaparezca
                         time.sleep(6)
 
+            except pyautogui.FailSafeException:
+                self.log("⚠️ Failsafe de pyautogui: bot detenido.")
+                self.running = False
+                break
             except Exception as e:
                 self.log(f"⚠️ Error: {e}")
 
@@ -122,10 +132,16 @@ class LoLAutoAccept:
     # ------------------------------------------------------------------
 
     def _load_template(self):
+        # Re-resolver en cada carga: el template puede recalibrarse en caliente.
+        global TEMPLATE_PATH
+        TEMPLATE_PATH = _resolve_template_path()
         if not os.path.exists(TEMPLATE_PATH):
             self.log("⚠️ Template no encontrado. Usando detección por color como respaldo.")
             return None
         template = cv2.imread(TEMPLATE_PATH, cv2.IMREAD_COLOR)
+        if template is None:
+            self.log(f"⚠️ Template ilegible ({TEMPLATE_PATH}). Usando detección por color.")
+            return None
         self.log("📄 Template del botón ¡ACEPTAR! cargado correctamente.")
         return template
 
