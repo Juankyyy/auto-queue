@@ -1,0 +1,15 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+# F/E: errores reales. I/UP: orden y modernizacion.
+# Se excluyen S (bandit) y BLE (blind-except): los callbacks de la GUI
+# tragan errores a proposito para no tumbar la app.
+select = ["F", "E4", "E7", "E9", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["paths", "config_store", "stats_store", "tray", "icons", "bot"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -7,11 +7,12 @@ un proveedor de estado y las acciones del menú.
 
 import os
 import threading
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import pystray
-from pystray import MenuItem as TrayItem, Menu as TrayMenu
 from PIL import Image, ImageDraw
+from pystray import Menu as TrayMenu
+from pystray import MenuItem as TrayItem
 
 from paths import bundled_path
 
@@ -78,7 +79,7 @@ class SystemTray:
         self._cb_map = on_map
         self._cb_unmap = on_unmap
         self._photo_factory = photo_factory
-        self._icon: Optional[pystray.Icon] = None
+        self._icon: pystray.Icon | None = None
         self._img_off = None
         self._img_on = None
         self._photos_off: list = []

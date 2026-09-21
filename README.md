@@ -76,14 +76,23 @@ Settings are saved automatically to `config.json`:
 | `auto_deactivate` | Turn off after accepting a match           | `true`  |
 | `close_to_tray`   | ✕ minimizes to tray instead of quitting    | `true`  |
 | `log_visible`     | Show the event log on startup              | `true`  |
+| `pos`             | Last window position `[x, y]` (auto-saved) | `null`  |
 
 ## Project structure
 
 ```
 auto-queue/
-├── main.py              # GUI (Tkinter) + tray + stats
+├── main.py              # GUI (Tkinter, single-window pages)
 ├── bot.py               # Detection (OpenCV) and auto-click
-├── requirements.txt     # Dependencies
+├── paths.py             # Bundled/writable paths + atomic JSON writes
+├── config_store.py      # Validated settings persistence
+├── stats_store.py       # Usage stats persistence + aggregation
+├── tray.py              # System tray icon + status icons
+├── icons.py             # Font Awesome icon font loader (CC BY 4.0)
+├── fonts/               # Bundled icon font (fa-solid-900.ttf)
+├── tests/               # pytest: stores, bot matching, loop (headless)
+├── requirements.txt     # Pinned dependencies
+├── requirements-dev.txt # Dev dependencies (ruff, pytest, pyinstaller)
 ├── Iniciar Bot.bat      # Windows launcher
 ├── app_icon.ico/.png    # App icons
 ├── config.json          # Settings (auto-generated)

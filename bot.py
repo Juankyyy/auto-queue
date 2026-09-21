@@ -2,16 +2,18 @@
 bot.py — Lógica principal del bot de auto-aceptación para LoL
 """
 
-import cv2
-import numpy as np
-import pyautogui
+import os
 import random
 import threading
 import time
-import os
-from PIL import ImageGrab, Image
+
+import cv2
+import numpy as np
+import pyautogui
+from PIL import ImageGrab
 
 from paths import bundled_path, user_data_dir
+
 
 # Conciencia DPI para que captura y clics usen las mismas coordenadas
 # con escalados de Windows >100%.

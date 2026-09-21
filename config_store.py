@@ -2,12 +2,12 @@
 config_store.py — Persistencia validada de ajustes (config.json).
 """
 
-from typing import Any, Dict
+import json
+from typing import Any
 
 from paths import atomic_write_json
-import json
 
-CONFIG_DEFAULTS: Dict[str, Any] = {
+CONFIG_DEFAULTS: dict[str, Any] = {
     "delay": 0.5,
     "threshold": 0.80,
     "auto_deactivate": True,
@@ -20,11 +20,11 @@ DELAY_MIN, DELAY_MAX = 0.1, 3.0
 THRESHOLD_MIN, THRESHOLD_MAX = 0.50, 0.99
 
 
-def load_config(path: str) -> Dict[str, Any]:
+def load_config(path: str) -> dict[str, Any]:
     """Lee config.json con valores validados; defaults si falta o es inválido."""
-    cfg: Dict[str, Any] = dict(CONFIG_DEFAULTS)
+    cfg: dict[str, Any] = dict(CONFIG_DEFAULTS)
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             cfg["delay"] = min(DELAY_MAX, max(DELAY_MIN,

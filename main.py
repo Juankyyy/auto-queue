@@ -2,23 +2,24 @@
 main.py — Interfaz gráfica premium para el bot de auto-aceptación de LoL
 """
 
-import tkinter as tk
-from tkinter import font as tkfont
 import calendar
-import threading
-import time
+import ctypes
 import math
 import os
 import socket
 import sys
-import ctypes
+import threading
+import time
+import tkinter as tk
 from datetime import datetime, timedelta
+
 from PIL import Image, ImageTk
-from bot import LoLAutoAccept
+
 import icons
-from paths import bundled_path, user_data_dir
+from bot import LoLAutoAccept
 from config_store import load_config, save_config
-from stats_store import StatsStore, MAX_STATS_EVENTS
+from paths import bundled_path, user_data_dir
+from stats_store import MAX_STATS_EVENTS, StatsStore
 from tray import SystemTray
 
 # Identificador de aplicación para que Windows muestre el icono propio en la barra de tareas
@@ -43,7 +44,7 @@ _MAX_LOG_LINES = 500
 def _load_version():
     """Lee la versión desde version.txt (empaquetado en el .exe)."""
     try:
-        with open(bundled_path("version.txt"), "r", encoding="utf-8") as f:
+        with open(bundled_path("version.txt"), encoding="utf-8") as f:
             return f.read().strip() or "0.0.0-dev"
     except Exception:
         return "0.0.0-dev"
@@ -532,7 +533,7 @@ class App:
                                 command=lambda: self.show_page("settings"),
                                 hover_fg=GOLD, active_fg=GOLD)
         self.tb_cfg.pack(side="right")
-        self.tb_stats = TitleIcon(titlebar, icons.glyph("bars"),
+        self.tb_stats = TitleIcon(titlebar, icons.glyph("chart"),
                                   command=lambda: self.show_page("stats"),
                                   hover_fg=CYAN, active_fg=CYAN)
         self.tb_stats.pack(side="right")
@@ -718,12 +719,9 @@ class App:
 
         # Encabezado de Ajustes
         s_header = tk.Frame(body, bg=BG)
-        s_header.pack(fill="x", padx=20, pady=(14, 10))
+        s_header.pack(fill="x", padx=20, pady=(14, 4))
 
-        s_header = tk.Frame(body, bg=BG)
-        s_header.pack(fill="x", padx=20, pady=(14, 10))
-
-        tk.Label(s_header, text="⚙  AJUSTES", font=("Cascadia Code", 13, "bold"),
+        tk.Label(s_header, text="AJUSTES", font=("Cascadia Code", 13, "bold"),
                  fg=GOLD, bg=BG).pack(side="left")
 
         Divider(body).pack(fill="x", padx=20, pady=(0, 14))
@@ -881,7 +879,7 @@ class App:
         # Encabezado
         header = tk.Frame(body, bg=BG)
         header.pack(fill="x", padx=20, pady=(14, 4))
-        tk.Label(header, text="📊  ESTADÍSTICAS", font=("Cascadia Code", 12, "bold"),
+        tk.Label(header, text="ESTADÍSTICAS", font=("Cascadia Code", 12, "bold"),
                  fg=GOLD, bg=BG).pack(side="left")
 
         Divider(body).pack(fill="x", padx=20, pady=(6, 12))

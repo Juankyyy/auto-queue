@@ -10,6 +10,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-windows-exe:
     runs-on: windows-latest
@@ -42,19 +46,7 @@ jobs:
 
       - name: Generar notas de la release
         shell: pwsh
-        run: |
-          $tag = "${{ github.ref_name }}"
-          # Notas personalizadas = mensaje del tag anotado (lo escribe el workflow Auto Release)
-          $tagMsg = (git tag -l --format='%(contents)' $tag | Out-String).Trim()
-          # Tag anterior para listar solo los cambios nuevos
-          $prev = (git describe --tags --abbrev=0 "$tag^" 2>$null | Out-String).Trim()
-          if ($prev) { $range = "$prev..$tag" } else { $range = $tag }
-          $log = (git log $range --pretty=format:'- %s (%h)' --reverse | Out-String).Trim()
-          $body = ""
-          if ($tagMsg) { $body += "## Novedades`r`n`r`n$tagMsg`r`n`r`n" }
-          $body += "## Cambios`r`n`r`n$log"
-          Set-Content -Path RELEASE_NOTES.md -Value $body -Encoding UTF8
-          Get-Content RELEASE_NOTES.md
+        run: ./.github/scripts/release-notes.ps1 -Tag "${{ github.ref_name }}"
 
       - name: Create GitHub Release with EXE
         uses: softprops/action-gh-release@v2

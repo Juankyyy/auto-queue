@@ -5,7 +5,7 @@ stats_store.py — Persistencia y agregación de estadísticas de uso (stats.jso
 import calendar  # noqa: F401 (reservado para futura navegación por meses)
 import json
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from paths import atomic_write_json
 
@@ -21,19 +21,19 @@ class StatsStore:
 
     def __init__(self, path: str) -> None:
         self._path = path
-        self.data: Dict[str, List[Any]] = {
+        self.data: dict[str, list[Any]] = {
             "activations": [], "matches": [], "sessions": [],
         }
 
     # ── Persistencia ──
 
-    def load(self) -> Dict[str, List[Any]]:
+    def load(self) -> dict[str, list[Any]]:
         """Lee stats.json; estructura válida o vacía si falta/es inválido."""
-        stats: Dict[str, List[Any]] = {
+        stats: dict[str, list[Any]] = {
             "activations": [], "matches": [], "sessions": [],
         }
         try:
-            with open(self._path, "r", encoding="utf-8") as f:
+            with open(self._path, encoding="utf-8") as f:
                 raw = json.load(f)
             if isinstance(raw, dict):
                 for key in stats:
@@ -68,9 +68,9 @@ class StatsStore:
         self.data = {"activations": [], "matches": [], "sessions": []}
         self.save()
 
-    def earliest(self) -> Optional[datetime]:
+    def earliest(self) -> datetime | None:
         """Fecha/hora del evento más antiguo, o None si no hay datos."""
-        best: Optional[datetime] = None
+        best: datetime | None = None
         try:
             for ts in self.data.get("activations", []):
                 dt = self.parse_ts(ts)
@@ -112,7 +112,7 @@ class StatsStore:
     # ── Agregación ──
 
     @staticmethod
-    def parse_ts(value: Any) -> Optional[datetime]:
+    def parse_ts(value: Any) -> datetime | None:
         try:
             return datetime.fromisoformat(value)
         except Exception:
@@ -120,8 +120,8 @@ class StatsStore:
 
     @classmethod
     def period_bounds(cls, period: str,
-                      ref: Optional[datetime] = None
-                      ) -> Tuple[datetime, datetime, str]:
+                      ref: datetime | None = None
+                      ) -> tuple[datetime, datetime, str]:
         """(inicio, fin, etiqueta) del periodo calendario que contiene a ref."""
         ref = ref or datetime.now()
         if period == "week":
@@ -144,9 +144,9 @@ class StatsStore:
         return start, end, label
 
     def stats_for(self, period: str,
-                  ref: Optional[datetime] = None,
-                  live_start: Optional[datetime] = None,
-                  now: Optional[datetime] = None) -> Dict[str, Any]:
+                  ref: datetime | None = None,
+                  live_start: datetime | None = None,
+                  now: datetime | None = None) -> dict[str, Any]:
         """Agrega eventos del periodo visible: partidas, activaciones y tiempo."""
         now = now or datetime.now()
         start, end, label = self.period_bounds(period, ref or now)

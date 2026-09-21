@@ -76,14 +76,23 @@ Los ajustes se guardan automáticamente en `config.json`:
 | `auto_deactivate` | Apagarse tras aceptar una partida        | `true`  |
 | `close_to_tray`   | La ✕ minimiza a bandeja en vez de salir  | `true`  |
 | `log_visible`     | Mostrar el registro al arrancar          | `true`  |
+| `pos`             | Última posición `[x, y]` (se guarda sola)| `null`  |
 
 ## Estructura del proyecto
 
 ```
 auto-queue/
-├── main.py              # Interfaz gráfica (Tkinter) + bandeja + stats
+├── main.py              # Interfaz gráfica (Tkinter, ventana única)
 ├── bot.py               # Detección (OpenCV) y clic automático
-├── requirements.txt     # Dependencias
+├── paths.py             # Rutas empaquetadas/escribibles + JSON atómico
+├── config_store.py      # Persistencia validada de ajustes
+├── stats_store.py       # Persistencia y agregación de estadísticas
+├── tray.py              # Icono de bandeja + iconos de estado
+├── icons.py             # Cargador de fuente Font Awesome (CC BY 4.0)
+├── fonts/               # Fuente de iconos empaquetada (fa-solid-900.ttf)
+├── tests/               # pytest: stores, bot y loop (sin display)
+├── requirements.txt     # Dependencias pineadas
+├── requirements-dev.txt # Dependencias dev (ruff, pytest, pyinstaller)
 ├── Iniciar Bot.bat      # Lanzador en Windows
 ├── app_icon.ico/.png    # Iconos de la app
 ├── config.json          # Ajustes (se genera solo)

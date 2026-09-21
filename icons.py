@@ -10,7 +10,6 @@ https://fontawesome.com/license/free
 
 import ctypes
 import os
-from typing import Optional
 
 from paths import bundled_path
 
@@ -20,7 +19,7 @@ _FONT_FILE = ("fonts", "fa-solid-900.ttf")
 # Codepoints PUA estables de Font Awesome 6 Free Solid.
 GLYPHS = {
     "gear": "\uf013",    # ajustes
-    "bars": "\uf080",    # estadisticas (chart-bar)
+    "chart": "\uf201",   # estadisticas (chart-line)
     "house": "\uf015",   # inicio
     "note": "\uf249",    # registro (note-sticky)
     "xmark": "\uf00d",   # cerrar
@@ -52,5 +51,5 @@ def family() -> str:
     return FAMILY
 
 
-def glyph(name: str) -> Optional[str]:
+def glyph(name: str) -> str | None:
     return GLYPHS.get(name)
