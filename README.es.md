@@ -26,7 +26,11 @@
 
 Detecta el botón **¡ACEPTAR!** por reconocimiento de imagen (OpenCV Template Matching, con respaldo por detección de color) y hace clic por ti con un pequeño retardo aleatorio para un comportamiento más natural.
 
-> 🚻 **Uso responsable:** está creada para ausencias cortas como ir al baño o a la cocina por algo de comer. No se recomienda para ausentarte mucho tiempo ni fomentamos abandonar las colas: si lo activas debes estar listo para jugar.
+> ### ⚠️ Uso responsable — leer antes de usar
+>
+> **Esta app solo está pensada para ausencias cortas** (ir al baño, ir a la cocina por algo de comer, etc.).
+>
+> **No la uses para ausentarte mucho tiempo ni para abandonar colas: si la activas debes estar listo para jugar** cuando empiece la partida.
 
 ## Características
 

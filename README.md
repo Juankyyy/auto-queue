@@ -26,7 +26,11 @@
 
 It detects the **ACCEPT!** button through image recognition (OpenCV Template Matching, with color-detection fallback) and clicks it for you with a small random delay for more natural behavior.
 
-> 🚻 **Responsible use:** it is made for short absences such as going to the bathroom or grabbing something from the kitchen. Going AFK for a long time is not recommended, and we do not encourage abandoning queues: if you enable it, you must be ready to play.
+> ### ⚠️ Responsible use — please read
+>
+> **This app is only meant for short absences** (bathroom, grabbing something from the kitchen, etc.).
+>
+> **Do not use it to stay AFK for long periods or to abandon queues: if you enable it, you must be ready to play** when the match starts.
 
 ## Features
 
