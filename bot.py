@@ -9,46 +9,55 @@ import random
 import threading
 import time
 import os
-import sys
 from PIL import ImageGrab, Image
+
+from paths import bundled_path, user_data_dir
+
+# Conciencia DPI para que captura y clics usen las mismas coordenadas
+# con escalados de Windows >100%.
+def _ensure_dpi_awareness():
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Per-monitor V2
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()  # System (pre-W8.1)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+_ensure_dpi_awareness()
 
 # Failsafe activado a propósito: mover el mouse a la esquina superior
 # izquierda aborta el control automático (medida de seguridad).
 pyautogui.FAILSAFE = True
 
 
-def _bundled_path(*parts):
-    """Ruta a un recurso empaquetado (funciona en .py y en .exe de PyInstaller)."""
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        return os.path.join(sys._MEIPASS, *parts)
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), *parts)
-
-
-def _user_data_dir():
-    """Carpeta escribible (junto al .exe si está congelado)."""
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
-
-
 def _resolve_template_path():
     """El template se puede recalibrar: prioriza el de junto al .exe, si no el empaquetado."""
-    user_copy = os.path.join(_user_data_dir(), "templates", "accept_btn.png")
+    user_copy = os.path.join(user_data_dir(), "templates", "accept_btn.png")
     if os.path.exists(user_copy):
         return user_copy
-    return _bundled_path("templates", "accept_btn.png")
+    return bundled_path("templates", "accept_btn.png")
 
 
 TEMPLATE_PATH = _resolve_template_path()
 
 
 class LoLAutoAccept:
+    # Escalas del template para soportar distintos DPI/resoluciones.
+    TEMPLATE_SCALES = (0.85, 1.0, 1.18)
+
     def __init__(self, log_callback=None, accepted_callback=None):
         """
-        log_callback: función que recibe un str para mostrar en el log
+        log_callback: recibe (msg) o (msg, level); level en
+            {"info", "success", "warn", "error"}
         accepted_callback: función que recibe un bool (auto_deactivated)
         """
-        self.log = log_callback or print
+        self.log = log_callback or (lambda msg, level="info": print(msg))
         self.on_accepted = accepted_callback or (lambda _: None)
         self._run_event = threading.Event()
         self.partidas_aceptadas = 0
@@ -69,19 +78,29 @@ class LoLAutoAccept:
         else:
             self._run_event.clear()
 
+    def _emit(self, message, level="info"):
+        """Log con nivel explícito; compatible con callbacks de 1 arg."""
+        try:
+            self.log(message, level)
+        except TypeError:
+            try:
+                self.log(message)
+            except Exception:
+                pass
+
     # ------------------------------------------------------------------
     # Control del loop
     # ------------------------------------------------------------------
 
     def start(self):
         self._run_event.set()
-        self.log("🟢 Bot activado. Monitoreando pantalla...")
+        self._emit("🟢 Bot activado. Monitoreando pantalla...", "success")
         self._loop()
 
     def stop(self):
         if self._run_event.is_set():
             self._run_event.clear()
-            self.log("🔴 Bot detenido.")
+            self._emit("🔴 Bot detenido.", "info")
 
     def _sleep_interruptible(self, seconds):
         """Espera por tramos para que stop() interrumpa sin demora larga."""
@@ -111,18 +130,20 @@ class LoLAutoAccept:
 
                 if found and location:
                     actual_delay = max(0.05, self.delay + random.uniform(-0.1, 0.2))
-                    self.log(f"✅ ¡Partida encontrada! Aceptando en {actual_delay:.2f}s...")
+                    self._emit(f"✅ ¡Partida encontrada! Aceptando en {actual_delay:.2f}s...",
+                               "success")
                     self._sleep_interruptible(actual_delay)
                     if not self._run_event.is_set():
                         break
                     try:
                         self._click(location)
                     except pyautogui.FailSafeException:
-                        self.log("⚠️ Failsafe de pyautogui: mouse en la esquina, bot detenido.")
+                        self._emit("⚠️ Failsafe de pyautogui: mouse en la esquina, bot detenido.",
+                                   "warn")
                         self._run_event.clear()
                         break
                     self.partidas_aceptadas += 1
-                    self.log(f"🎮 Partida #{self.partidas_aceptadas} aceptada.")
+                    self._emit(f"🎮 Partida #{self.partidas_aceptadas} aceptada.", "success")
 
                     if self.auto_deactivate:
                         self._run_event.clear()
@@ -130,16 +151,17 @@ class LoLAutoAccept:
                         break
                     else:
                         self.on_accepted(False)
-                        self.log("⏳ En espera... Manteniendo bot activo por si se cancela la cola.")
+                        self._emit("⏳ En espera... Manteniendo bot activo por si se cancela la cola.",
+                                   "info")
                         # Esperar a que la ventana de diálogo desaparezca (interrumpible)
                         self._sleep_interruptible(6)
 
             except pyautogui.FailSafeException:
-                self.log("⚠️ Failsafe de pyautogui: bot detenido.")
+                self._emit("⚠️ Failsafe de pyautogui: bot detenido.", "warn")
                 self._run_event.clear()
                 break
             except Exception as e:
-                self.log(f"⚠️ Error: {e}")
+                self._emit(f"⚠️ Error: {e}", "error")
 
             self._sleep_interruptible(self.poll_interval)
 
@@ -147,12 +169,13 @@ class LoLAutoAccept:
     # Captura de pantalla
     # ------------------------------------------------------------------
 
-    def _capture_screen(self):
-        screenshot = ImageGrab.grab()
+    def _capture_screen(self, bbox=None):
+        """Captura la pantalla (o la región bbox) en BGR para OpenCV."""
+        screenshot = ImageGrab.grab(bbox=bbox)
         return cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
 
     # ------------------------------------------------------------------
-    # Detección por template matching (OpenCV)
+    # Detección por template matching (OpenCV, multi-escala en grises)
     # ------------------------------------------------------------------
 
     def _load_template(self):
@@ -160,25 +183,55 @@ class LoLAutoAccept:
         global TEMPLATE_PATH
         TEMPLATE_PATH = _resolve_template_path()
         if not os.path.exists(TEMPLATE_PATH):
-            self.log("⚠️ Template no encontrado. Usando detección por color como respaldo.")
+            self._emit("⚠️ Template no encontrado. Usando detección por color como respaldo.",
+                       "warn")
             return None
         template = cv2.imread(TEMPLATE_PATH, cv2.IMREAD_COLOR)
         if template is None:
-            self.log(f"⚠️ Template ilegible ({TEMPLATE_PATH}). Usando detección por color.")
+            self._emit(f"⚠️ Template ilegible ({TEMPLATE_PATH}). Usando detección por color.",
+                       "warn")
             return None
-        self.log("📄 Template del botón ¡ACEPTAR! cargado correctamente.")
-        return template
+        gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        # Precomputar variantes de escala (soporta distintos DPI/resoluciones).
+        templates = []
+        for scale in self.TEMPLATE_SCALES:
+            w = max(8, int(gray.shape[1] * scale))
+            h = max(8, int(gray.shape[0] * scale))
+            resized = cv2.resize(gray, (w, h), interpolation=cv2.INTER_AREA)
+            templates.append((scale, resized))
+        self._emit("📄 Template del botón ¡ACEPTAR! cargado correctamente.", "info")
+        return templates
 
     def _match_template(self, screenshot, template):
-        """Busca el template en el screenshot. Retorna (found, center_point)."""
-        result = cv2.matchTemplate(screenshot, template, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+        """Busca el template (o lista multi-escala) en el screenshot.
 
-        if max_val >= self.threshold:
-            h, w = template.shape[:2]
-            center_x = max_loc[0] + w // 2
-            center_y = max_loc[1] + h // 2
-            return True, (center_x, center_y)
+        Convierte a gris una sola vez y retorna (found, center_point)
+        del mejor ajuste >= threshold.
+        """
+        if template is None:
+            return False, None
+        if isinstance(template, np.ndarray):
+            # Compat: plantilla única BGR o gris.
+            gray_tpl = (cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+                        if template.ndim == 3 else template)
+            candidates = [(1.0, gray_tpl)]
+        else:
+            candidates = template
+        gray = (cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
+                if screenshot.ndim == 3 else screenshot)
+        best_val, best_loc, best_wh = -1.0, None, None
+        for _, tpl in candidates:
+            if tpl.shape[0] > gray.shape[0] or tpl.shape[1] > gray.shape[1]:
+                continue
+            result = cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(result)
+            if max_val > best_val:
+                best_val = max_val
+                best_loc = max_loc
+                best_wh = (tpl.shape[1], tpl.shape[0])
+        if best_loc is not None and best_val >= self.threshold:
+            w, h = best_wh
+            return True, (best_loc[0] + w // 2, best_loc[1] + h // 2)
         return False, None
 
     # ------------------------------------------------------------------
@@ -235,14 +288,16 @@ class LoLAutoAccept:
         recorta esa región y la guarda como template.
         Retorna True si tuvo éxito.
         """
-        self.log("📸 Capturando template en 3 segundos... Asegúrate de tener el popup visible.")
+        self._emit("📸 Capturando template en 3 segundos... Asegúrate de tener el popup visible.",
+                   "warn")
         time.sleep(3)
 
         screenshot = self._capture_screen()
         found, location = self._detect_by_color(screenshot)
 
         if not found or not location:
-            self.log("❌ No se detectó el botón. Abre el popup de 'PARTIDA ENCONTRADA' primero.")
+            self._emit("❌ No se detectó el botón. Abre el popup de 'PARTIDA ENCONTRADA' primero.",
+                       "error")
             return False
 
         # Recortar área alrededor del botón
@@ -257,13 +312,13 @@ class LoLAutoAccept:
         cropped = screenshot[y1:y2, x1:x2]
 
         # Guardar template (junto al .exe si está congelado, para que persista)
-        os.makedirs(os.path.join(_user_data_dir(), "templates"), exist_ok=True)
-        save_path = os.path.join(_user_data_dir(), "templates", "accept_btn.png")
+        os.makedirs(os.path.join(user_data_dir(), "templates"), exist_ok=True)
+        save_path = os.path.join(user_data_dir(), "templates", "accept_btn.png")
         cv2.imwrite(save_path, cropped)
         # Actualizar la ruta en caliente para esta sesión
         global TEMPLATE_PATH
         TEMPLATE_PATH = save_path
-        self.log(f"✅ Template guardado correctamente en: {save_path}")
+        self._emit(f"✅ Template guardado correctamente en: {save_path}", "success")
         return True
 
     # ------------------------------------------------------------------

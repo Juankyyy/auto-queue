@@ -68,6 +68,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('templates', 'templates'),
+        ('fonts', 'fonts'),
         ('app_icon.png', '.'),
         ('app_icon.ico', '.'),
         ('version.txt', '.'),

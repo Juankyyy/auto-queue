@@ -4,62 +4,46 @@ main.py — Interfaz gráfica premium para el bot de auto-aceptación de LoL
 
 import tkinter as tk
 from tkinter import font as tkfont
+import calendar
 import threading
 import time
 import math
 import os
+import socket
 import sys
-import json
 import ctypes
 from datetime import datetime, timedelta
-from PIL import Image, ImageDraw, ImageTk
-import pystray
-from pystray import MenuItem as TrayItem, Menu as TrayMenu
+from PIL import Image, ImageTk
 from bot import LoLAutoAccept
+import icons
+from paths import bundled_path, user_data_dir
+from config_store import load_config, save_config
+from stats_store import StatsStore, MAX_STATS_EVENTS
+from tray import SystemTray
 
 # Identificador de aplicación para que Windows muestre el icono propio en la barra de tareas
+# + conciencia DPI para que captura (ImageGrab) y clics usen las mismas coordenadas.
 try:
     myappid = "lol.autoaccept.bot.app.1.0"
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Per-monitor V2
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
 except Exception:
     pass
 
 
-def _bundled_path(*parts):
-    """Ruta a un recurso empaquetado (funciona en .py y en .exe de PyInstaller)."""
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        return os.path.join(sys._MEIPASS, *parts)
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), *parts)
-
-
-def _user_data_dir():
-    """Carpeta escribible para config.json/stats.json (junto al .exe si está congelado)."""
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
-
-
 _MAX_LOG_LINES = 500
-_MAX_STATS_EVENTS = 5000
-
-
-def _atomic_write_json(path, data):
-    """Escritura atómica: tmp + fsync + os.replace para no corromper en cortes."""
-    tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-        f.flush()
-        try:
-            os.fsync(f.fileno())
-        except Exception:
-            pass
-    os.replace(tmp, path)
 
 
 def _load_version():
     """Lee la versión desde version.txt (empaquetado en el .exe)."""
     try:
-        with open(_bundled_path("version.txt"), "r", encoding="utf-8") as f:
+        with open(bundled_path("version.txt"), "r", encoding="utf-8") as f:
             return f.read().strip() or "0.0.0-dev"
     except Exception:
         return "0.0.0-dev"
@@ -161,16 +145,23 @@ class GlowButton(tk.Canvas):
     def __init__(self, parent, text_on="ACTIVAR BOT", text_off="DETENER BOT",
                  command=None, **kwargs):
         super().__init__(parent, width=230, height=58,
-                         bg=BG, highlightthickness=0, cursor="hand2", **kwargs)
+                         bg=BG, highlightthickness=0, cursor="hand2",
+                          takefocus=True, highlightcolor=CYAN, **kwargs)
         self.text_on = text_on
         self.text_off = text_off
         self.command = command
         self.is_on = False
         self._draw()
         self.bind("<Button-1>", self._on_click)
+        self.bind("<Return>", self._on_key)
+        self.bind("<KP_Enter>", self._on_key)
+        self.bind("<space>", self._on_key)
+        self.bind("<FocusIn>", self._on_focus_in)
+        self.bind("<FocusOut>", self._on_focus_out)
         self.bind("<Enter>", self._on_hover)
         self.bind("<Leave>", self._on_leave)
         self._hovered = False
+        self._focused = False
 
     def _draw(self, hover=False):
         self.delete("all")
@@ -222,11 +213,28 @@ class GlowButton(tk.Canvas):
 
     def set_state(self, is_on: bool):
         self.is_on = is_on
-        self._draw(self._hovered)
+        self._draw(self._hovered or self._focused)
 
     def _on_click(self, _):
+        try:
+            self.focus_set()
+        except Exception:
+            pass
         if self.command:
             self.command()
+
+    def _on_key(self, event):
+        if event.keysym in ("Return", "KP_Enter", "space"):
+            self._on_click(event)
+            return "break"
+
+    def _on_focus_in(self, _):
+        self._focused = True
+        self._draw(hover=True)
+
+    def _on_focus_out(self, _):
+        self._focused = False
+        self._draw(hover=self._hovered)
 
     def _on_hover(self, _):
         self._hovered = True
@@ -234,7 +242,98 @@ class GlowButton(tk.Canvas):
 
     def _on_leave(self, _):
         self._hovered = False
-        self._draw(hover=False)
+        self._draw(hover=self._focused)
+
+
+class CloseButton(tk.Canvas):
+    """Boton cerrar con X dibujada (simetrica y nitida a cualquier escala)."""
+
+    def __init__(self, parent, command=None, size=38, **kwargs):
+        super().__init__(parent, width=size, height=36,
+                         bg=BG, highlightthickness=0, cursor="hand2", **kwargs)
+        self.command = command
+        self._size = size
+        self._draw(False)
+        self.bind("<Button-1>", self._on_click)
+        self.bind("<Enter>", lambda _: self._draw(True))
+        self.bind("<Leave>", lambda _: self._draw(False))
+
+    def _draw(self, hover):
+        self.delete("all")
+        w = self._size
+        self.create_rectangle(0, 0, w, 36, fill=RED if hover else BG,
+                              outline="")
+        color = WHITE if hover else TEXT_DIM
+        self.create_text(w / 2, 19, text=icons.glyph("xmark"),
+                         font=(icons.family(), 12), fill=color)
+
+    def _on_click(self, _):
+        if self.command:
+            self.command()
+
+
+class TitleIcon(tk.Canvas):
+    """Icono de la fuente Font Awesome (tintable, nitido a todo DPI)."""
+
+    def __init__(self, parent, glyph, command=None, size=38, height=36,
+                 bg=BG, fg=TEXT_DIM, hover_fg=WHITE, active_fg=None,
+                 font_size=13, **kwargs):
+        super().__init__(parent, width=size, height=height,
+                         bg=bg, highlightthickness=0, cursor="hand2",
+                         takefocus=True, highlightcolor=hover_fg, **kwargs)
+        self._glyph = glyph
+        self._font = (icons.family(), font_size)
+        self.command = command
+        self._size = size
+        self._height = height
+        self._bg = bg
+        self._fg = fg
+        self._hover_fg = hover_fg
+        self._active_fg = active_fg if active_fg is not None else hover_fg
+        self._hovered = False
+        self._active = False
+        self._draw()
+        self.bind("<Button-1>", self._on_click)
+        self.bind("<Return>", self._on_key)
+        self.bind("<KP_Enter>", self._on_key)
+        self.bind("<space>", self._on_key)
+        self.bind("<Enter>", self._on_hover)
+        self.bind("<Leave>", self._on_leave)
+
+    def _draw(self):
+        self.delete("all")
+        color = self._active_fg if self._active else (
+            self._hover_fg if self._hovered else self._fg)
+        self.create_rectangle(0, 0, self._size, self._height,
+                              fill=self._bg if not self._hovered else BORDER,
+                              outline="")
+        self.create_text(self._size / 2, self._height / 2 + 1,
+                         text=self._glyph, font=self._font, fill=color)
+
+    def set_active(self, active):
+        self._active = bool(active)
+        self._draw()
+
+    def _on_click(self, _):
+        try:
+            self.focus_set()
+        except Exception:
+            pass
+        if self.command:
+            self.command()
+
+    def _on_key(self, event):
+        if event.keysym in ("Return", "KP_Enter", "space"):
+            self._on_click(event)
+            return "break"
+
+    def _on_hover(self, _):
+        self._hovered = True
+        self._draw()
+
+    def _on_leave(self, _):
+        self._hovered = False
+        self._draw()
 
 
 class HexIcon(tk.Canvas):
@@ -262,7 +361,6 @@ class HexIcon(tk.Canvas):
 
     @staticmethod
     def _hex_points(cx, cy, r):
-        import math
         pts = []
         for i in range(6):
             angle = math.radians(60 * i - 30)
@@ -273,6 +371,53 @@ class HexIcon(tk.Canvas):
 class Divider(tk.Frame):
     def __init__(self, parent, **kwargs):
         super().__init__(parent, bg=BORDER, height=1, **kwargs)
+
+
+class ScrollHost(tk.Frame):
+    """Contenedor con scroll por rueda (sin barra visible).
+
+    El binding global de rueda se comparte entre páginas con un
+    propietario: solo la página bajo el cursor responde y ninguna
+    deja bindings colgados al salir.
+    """
+
+    _wheel_owner = None
+
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, bg=BG, **kwargs)
+        self.canvas = tk.Canvas(self, bg=BG, highlightthickness=0, bd=0)
+        self.inner = tk.Frame(self.canvas, bg=BG)
+        self._win = self.canvas.create_window((0, 0), window=self.inner,
+                                              anchor="nw")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.inner.bind("<Configure>",
+                        lambda _: self.canvas.configure(
+                            scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>",
+                         lambda e: self.canvas.itemconfig(self._win,
+                                                          width=e.width))
+        self.inner.bind("<Enter>", lambda _: self._bind_wheel())
+        self.inner.bind("<Leave>", lambda _: self._unbind_wheel())
+
+    def _bind_wheel(self):
+        ScrollHost._wheel_owner = self
+        self.canvas.bind_all("<MouseWheel>", self._wheel)
+
+    def _unbind_wheel(self):
+        if ScrollHost._wheel_owner is self:
+            ScrollHost._wheel_owner = None
+            try:
+                self.canvas.unbind_all("<MouseWheel>")
+            except Exception:
+                pass
+
+    def _wheel(self, event):
+        if ScrollHost._wheel_owner is not self:
+            return
+        try:
+            self.canvas.yview_scroll(-1 * (event.delta // 120), "units")
+        except Exception:
+            pass
 
 
 class App:
@@ -287,17 +432,17 @@ class App:
         self.root.overrideredirect(True)
         self._drag_x = 0
         self._drag_y = 0
-        self.base_dir = _user_data_dir()
+        self.base_dir = user_data_dir()
         self._config_path = os.path.join(self.base_dir, "config.json")
 
         self._center_window(390, 560)
         self._apply_frameless_style()
 
         # Configurar icono de ventana y barra de tareas (nuevo icono primero)
-        ico_path = _bundled_path("app_icon.ico")
+        ico_path = bundled_path("app_icon.ico")
         logo_path = None
-        for candidate in (_bundled_path("app_icon.png"),
-                          _bundled_path("templates", "logo.png")):
+        for candidate in (bundled_path("app_icon.png"),
+                          bundled_path("templates", "logo.png")):
             if os.path.exists(candidate):
                 logo_path = candidate
                 break
@@ -326,20 +471,24 @@ class App:
         self.thresh_val = tk.DoubleVar(value=saved["threshold"])
         self.auto_deactivate_var = tk.BooleanVar(value=saved["auto_deactivate"])
         self.close_to_tray_var = tk.BooleanVar(value=saved["close_to_tray"])
-        self._settings_win = None
-        self._tray_icon = None
+        self._tray = None
         self._window_visible = True
         # Estadísticas de uso (persistentes en stats.json)
         self._stats_path = os.path.join(self.base_dir, "stats.json")
-        self._stats = self._load_stats()
+        self._stats_store = StatsStore(self._stats_path)
+        self._stats_store.load()
+        self._stats = self._stats_store.data
         self._session_start = None
-        self._stats_win = None
+        # Navegación PWA por páginas dentro de la misma ventana
+        self._page = "home"
+        self._pages = {}
+        self._settings_built = False
+        self._stats_built = False
+        self._stats_tick_on = False
+        self._page_heights = {"home": 560, "settings": 720, "stats": 660}
         self._stats_period = "day"
-        # Variantes del icono según estado (normal / activo con punto verde)
-        self._tray_img_off = None
-        self._tray_img_on = None
-        self._taskbar_photos_off = []
-        self._taskbar_photos_on = []
+        self._stats_ref = datetime.now()
+        self._win_pos = saved.get("pos")
 
         self.bot = LoLAutoAccept(
             log_callback=self._log,
@@ -349,6 +498,9 @@ class App:
         self._build_ui()
         self._setup_tray()
         self._set_log_visible(self._log_visible, save=False)
+        self._restore_pos(saved.get("pos"))
+        self._pos_job = None
+        self.root.bind("<Configure>", lambda _: self._schedule_pos_save())
 
     # ──────────────────────────────────────────
     # Construcción de la UI Principal
@@ -368,38 +520,26 @@ class App:
         tb_title = tk.Label(titlebar, text="LoL Auto Queue",
                             font=("Cascadia Code", 9), fg=TEXT_DIM, bg=BG)
         tb_title.pack(side="left", padx=12)
+        self.tb_title = tb_title
         tb_title.bind("<ButtonPress-1>", self._start_move)
         tb_title.bind("<B1-Motion>", self._on_move)
 
         # Botones arriba a la derecha: Ajustes y Cerrar
-        tb_close = tk.Label(titlebar, text="✕", font=("Segoe UI Symbol", 10, "bold"),
-                            fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
-        tb_close.pack(side="right", fill="y")
-        tb_close.bind("<Button-1>", lambda _: self._close_app())
-        tb_close.bind("<Enter>", lambda _: tb_close.config(bg=RED, fg=WHITE))
-        tb_close.bind("<Leave>", lambda _: tb_close.config(bg=BG, fg=TEXT_DIM))
+        tb_close = CloseButton(titlebar, command=self._close_app)
+        tb_close.pack(side="right")
 
-        tb_cfg = tk.Label(titlebar, text="⚙", font=("Segoe UI Symbol", 11),
-                          fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
-        tb_cfg.pack(side="right", fill="y")
-        tb_cfg.bind("<Button-1>", self._open_settings)
-        tb_cfg.bind("<Enter>", lambda _: tb_cfg.config(bg=BORDER, fg=GOLD))
-        tb_cfg.bind("<Leave>", lambda _: tb_cfg.config(bg=BG, fg=TEXT_DIM))
-
-        tb_stats = tk.Label(titlebar, text="📊", font=("Cascadia Code", 10),
-                            fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
-        tb_stats.pack(side="right", fill="y")
-        tb_stats.bind("<Button-1>", self._open_stats)
-        tb_stats.bind("<Enter>", lambda _: tb_stats.config(bg=BORDER, fg=CYAN))
-        tb_stats.bind("<Leave>", lambda _: tb_stats.config(bg=BG, fg=TEXT_DIM))
-
-        self.tb_log_btn = tk.Label(titlebar, text="📝", font=("Cascadia Code", 10),
-                                   fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
-        self.tb_log_btn.pack(side="right", fill="y")
-        self.tb_log_btn.bind("<Button-1>", lambda _: self._toggle_log())
-        self.tb_log_btn.bind("<Enter>", lambda _: self.tb_log_btn.config(bg=BORDER, fg=GREEN))
-        self.tb_log_btn.bind("<Leave>", lambda _: self.tb_log_btn.config(
-            bg=BG, fg=GREEN if self._log_visible else TEXT_DIM))
+        self.tb_cfg = TitleIcon(titlebar, icons.glyph("gear"),
+                                command=lambda: self.show_page("settings"),
+                                hover_fg=GOLD, active_fg=GOLD)
+        self.tb_cfg.pack(side="right")
+        self.tb_stats = TitleIcon(titlebar, icons.glyph("bars"),
+                                  command=lambda: self.show_page("stats"),
+                                  hover_fg=CYAN, active_fg=CYAN)
+        self.tb_stats.pack(side="right")
+        self.tb_home = TitleIcon(titlebar, icons.glyph("house"),
+                                 command=lambda: self.show_page("home"),
+                                 hover_fg=WHITE, active_fg=WHITE)
+        self.tb_home.pack(side="right")
 
         # ── Header ──────────────────────────────
         header = tk.Frame(root, bg=BG)
@@ -407,8 +547,8 @@ class App:
 
         # Logo de la app (nuevo icono primero)
         logo_loaded = False
-        for logo_path in (_bundled_path("app_icon.png"),
-                          _bundled_path("templates", "logo.png")):
+        for logo_path in (bundled_path("app_icon.png"),
+                          bundled_path("templates", "logo.png")):
             if not os.path.exists(logo_path):
                 continue
             try:
@@ -446,6 +586,12 @@ class App:
                                    fg=RED, bg=CARD)
         self.status_lbl.pack(side="left", padx=(8, 0))
 
+        self.log_toggle_btn = TitleIcon(status_card, icons.glyph("note"),
+                                        command=self._toggle_log, bg=CARD,
+                                        hover_fg=GREEN, active_fg=GREEN)
+        self.log_toggle_btn.pack(side="right", padx=16)
+        self.log_toggle_btn.set_active(self._log_visible)
+
         # ── Botón toggle ─────────────────────────
         btn_frame = tk.Frame(root, bg=BG)
         btn_frame.pack(pady=(16, 20))
@@ -481,88 +627,109 @@ class App:
         self.log_box.tag_config("success", foreground=GREEN)
         self.log_box.tag_config("info", foreground="#3FB950")
 
+        # ── Overlay de páginas internas (ajustes / estadísticas) ──
+        self.page_overlay = tk.Frame(root, bg=BG)
+        self._pages = {}
+        for _name in ("settings", "stats"):
+            _scroll = ScrollHost(self.page_overlay)
+            _scroll.pack(fill="both", expand=True)
+            _scroll.pack_forget()
+            self._pages[_name] = _scroll
+
+        self._update_nav_highlight()
         self._log("Sistema iniciado. Presiona ACTIVAR para comenzar.")
+
+    # ──────────────────────────────────────────
+    # Navegación por páginas (ventana única)
+    # ──────────────────────────────────────────
+
+    def _nav_leave(self, widget, page, color):
+        # (compat: el resaltado real lo gestiona TitleIcon.set_active)
+        self._update_nav_highlight()
+
+    def _update_nav_highlight(self):
+        try:
+            self.tb_cfg.set_active(self._page == "settings")
+        except Exception:
+            pass
+        try:
+            self.tb_stats.set_active(self._page == "stats")
+        except Exception:
+            pass
+        try:
+            self.tb_home.set_active(self._page == "home")
+        except Exception:
+            pass
+
+    def show_page(self, name):
+        """Cambia de página dentro de la misma ventana (estilo PWA)."""
+        if name not in ("home", "settings", "stats"):
+            return
+        try:
+            if name == "settings" and not self._settings_built:
+                self._build_settings_page()
+            if name == "stats" and not self._stats_built:
+                self._build_stats_page()
+            self._page = name
+            for _pg in self._pages.values():
+                _pg.pack_forget()
+            if name != "stats":
+                self._stats_tick_on = False
+            if name == "home":
+                self.page_overlay.place_forget()
+                self.tb_title.config(text="LoL Auto Queue")
+                self.root.update_idletasks()
+                if self._log_visible:
+                    self.root.geometry(f"390x{self._win_h_full or 560}")
+                else:
+                    self.root.geometry(f"390x{self.root.winfo_reqheight()}")
+            else:
+                self._pages[name].pack(fill="both", expand=True)
+                self.page_overlay.place(x=0, y=36, relwidth=1.0,
+                                        relheight=1.0, height=-36)
+                self.page_overlay.lift()
+                self.tb_title.config(
+                    text="Ajustes" if name == "settings" else "Estadísticas")
+                self.root.geometry(f"390x{self._page_heights[name]}")
+                self.root.update_idletasks()
+            self._update_nav_highlight()
+            if name == "stats":
+                self._select_period(self._stats_period)
+                if not self._stats_tick_on:
+                    self._stats_tick_on = True
+                    self._stats_tick()
+        except Exception:
+            pass
+
+    def _open_settings_page(self):
+        self._show_window()
+        self.show_page("settings")
 
     # ──────────────────────────────────────────
     # Menú de Configuración Separado
     # ──────────────────────────────────────────
 
-    def _open_settings(self, _=None):
-        if self._settings_win is not None and self._settings_win.winfo_exists():
-            self._settings_win.lift()
-            self._settings_win.focus_force()
+    def _build_settings_page(self):
+        """Construye la página de ajustes dentro de la ventana (una sola vez)."""
+        if self._settings_built:
             return
-
-        win = tk.Toplevel(self.root)
-        self._settings_win = win
-        win.title("Ajustes - LoL Auto Queue")
-        win.geometry("350x730")
-        win.resizable(False, False)
-        win.configure(bg=BG)
-        win.overrideredirect(True)
-        win.transient(self.root)
-
-        # Centrar sobre la ventana principal
-        self.root.update_idletasks()
-        rx = self.root.winfo_x()
-        ry = self.root.winfo_y()
-        rw = self.root.winfo_width()
-        rh = self.root.winfo_height()
-        x = rx + (rw - 350) // 2
-        y = ry + (rh - 730) // 2
-        win.geometry(f"350x730+{max(0, x)}+{max(0, y)}")
-
-        self._apply_frameless_style(win)
-
-        # Arrastre de la ventana de ajustes
-        drag = {"x": 0, "y": 0}
-
-        def _s_start_move(event):
-            drag["x"] = event.x_root - win.winfo_x()
-            drag["y"] = event.y_root - win.winfo_y()
-
-        def _s_on_move(event):
-            win.geometry(f"+{event.x_root - drag['x']}+{event.y_root - drag['y']}")
-
-        # ── Barra de título personalizada ──
-        s_titlebar = tk.Frame(win, bg=BG, height=36)
-        s_titlebar.pack(fill="x", side="top")
-        s_titlebar.pack_propagate(False)
-        s_titlebar.bind("<ButtonPress-1>", _s_start_move)
-        s_titlebar.bind("<B1-Motion>", _s_on_move)
-
-        s_tb_title = tk.Label(s_titlebar, text="Ajustes",
-                              font=("Cascadia Code", 9), fg=TEXT_DIM, bg=BG)
-        s_tb_title.pack(side="left", padx=12)
-        s_tb_title.bind("<ButtonPress-1>", _s_start_move)
-        s_tb_title.bind("<B1-Motion>", _s_on_move)
-
-        s_tb_close = tk.Label(s_titlebar, text="✕", font=("Segoe UI Symbol", 10, "bold"),
-                              fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
-        s_tb_close.pack(side="right", fill="y")
-        s_tb_close.bind("<Button-1>", lambda _: win.destroy())
-        s_tb_close.bind("<Enter>", lambda _: s_tb_close.config(bg=RED, fg=WHITE))
-        s_tb_close.bind("<Leave>", lambda _: s_tb_close.config(bg=BG, fg=TEXT_DIM))
-
-        # Icono si existe
-        ico_path = _bundled_path("app_icon.ico")
-        if os.path.exists(ico_path):
-            try:
-                win.iconbitmap(default=ico_path)
-            except Exception:
-                pass
+        self._settings_built = True
+        body = self._pages["settings"].inner
 
         # Encabezado de Ajustes
-        s_header = tk.Frame(win, bg=BG)
-        s_header.pack(fill="x", padx=20, pady=(6, 10))
+        s_header = tk.Frame(body, bg=BG)
+        s_header.pack(fill="x", padx=20, pady=(14, 10))
+
+        s_header = tk.Frame(body, bg=BG)
+        s_header.pack(fill="x", padx=20, pady=(14, 10))
 
         tk.Label(s_header, text="⚙  AJUSTES", font=("Cascadia Code", 13, "bold"),
                  fg=GOLD, bg=BG).pack(side="left")
 
-        Divider(win).pack(fill="x", padx=20, pady=(0, 14))
+        Divider(body).pack(fill="x", padx=20, pady=(0, 14))
 
         # Tarjeta 1: Ajustes de detección (sliders)
-        cfg_card = tk.Frame(win, bg=CARD)
+        cfg_card = tk.Frame(body, bg=CARD)
         cfg_card.pack(fill="x", padx=20, pady=0)
 
         tk.Label(cfg_card, text="DETECCIÓN Y TIEMPOS",
@@ -580,7 +747,7 @@ class App:
                           fmt=lambda v: f"{int(v*100)}%")
 
         # Tarjeta 2: Comportamiento tras aceptar
-        beh_card = tk.Frame(win, bg=CARD)
+        beh_card = tk.Frame(body, bg=CARD)
         beh_card.pack(fill="x", padx=20, pady=(10, 0))
 
         tk.Label(beh_card, text="AL ACEPTAR PARTIDA",
@@ -601,7 +768,7 @@ class App:
         btn_keep.pack(side="right", fill="x", expand=True, padx=(4, 0))
 
         beh_desc = tk.Label(beh_card, text="", font=("Cascadia Code", 9),
-                            fg=TEXT_DIM, bg=CARD, wraplength=275, justify="left")
+                            fg=TEXT_DIM, bg=CARD, wraplength=300, justify="left")
         beh_desc.pack(anchor="w", padx=16, pady=(0, 12))
 
         def update_beh_ui():
@@ -631,7 +798,7 @@ class App:
         update_beh_ui()
 
         # Tarjeta 3: Calibración / template
-        tpl_card = tk.Frame(win, bg=CARD)
+        tpl_card = tk.Frame(body, bg=CARD)
         tpl_card.pack(fill="x", padx=20, pady=10)
 
         tk.Label(tpl_card, text="TEMPLATE DE RECONOCIMIENTO",
@@ -639,7 +806,7 @@ class App:
                  ).pack(anchor="w", padx=16, pady=(12, 4))
 
         tk.Label(tpl_card, text="Si cambias de resolución de pantalla, puedes volver a capturar el botón.",
-                 font=("Cascadia Code", 9), fg=TEXT_DIM, bg=CARD, wraplength=275, justify="left"
+                 font=("Cascadia Code", 9), fg=TEXT_DIM, bg=CARD, wraplength=300, justify="left"
                  ).pack(anchor="w", padx=16, pady=(0, 8))
 
         cal_btn = tk.Label(tpl_card,
@@ -647,12 +814,12 @@ class App:
                            font=("Cascadia Code", 10, "bold"), fg=CYAN, bg=BORDER,
                            cursor="hand2", pady=7, padx=10)
         cal_btn.pack(padx=16, pady=(0, 14), anchor="w")
-        cal_btn.bind("<Button-1>", lambda e: (win.destroy(), self._calibrate()))
+        cal_btn.bind("<Button-1>", lambda e: self._calibrate())
         cal_btn.bind("<Enter>", lambda _: cal_btn.config(bg="#2D333B", fg=WHITE))
         cal_btn.bind("<Leave>", lambda _: cal_btn.config(bg=BORDER, fg=CYAN))
 
         # Tarjeta 4: Comportamiento al cerrar la app
-        close_card = tk.Frame(win, bg=CARD)
+        close_card = tk.Frame(body, bg=CARD)
         close_card.pack(fill="x", padx=20, pady=(0, 10))
 
         tk.Label(close_card, text="AL CERRAR LA APP",
@@ -673,7 +840,7 @@ class App:
         btn_tray.pack(side="right", fill="x", expand=True, padx=(4, 0))
 
         close_desc = tk.Label(close_card, text="", font=("Cascadia Code", 9),
-                              fg=TEXT_DIM, bg=CARD, wraplength=275, justify="left")
+                              fg=TEXT_DIM, bg=CARD, wraplength=300, justify="left")
         close_desc.pack(anchor="w", padx=16, pady=(0, 12))
 
         def update_close_ui():
@@ -700,85 +867,27 @@ class App:
         btn_tray.bind("<Button-1>", select_tray)
         update_close_ui()
 
-        # La ventana recién creada (frameless + transient) puede abrirse
-        # detrás de la principal: traerla al frente ya en el primer clic.
-        win.update_idletasks()
-        win.deiconify()
-        win.lift()
-        win.focus_force()
-        win.after(10, lambda: (win.lift(), win.focus_force())
-                 if win.winfo_exists() else None)
-
     # ──────────────────────────────────────────
-    # Ventana de Estadísticas
+    # Página de Estadísticas (dentro de la ventana)
     # ──────────────────────────────────────────
 
-    def _open_stats(self, _=None):
-        if self._stats_win is not None and self._stats_win.winfo_exists():
-            self._stats_win.lift()
-            self._stats_win.focus_force()
+    def _build_stats_page(self):
+        """Construye la página de estadísticas dentro de la ventana (una sola vez)."""
+        if self._stats_built:
             return
-
-        win = tk.Toplevel(self.root)
-        self._stats_win = win
-        win.title("Estadísticas - LoL Auto Queue")
-        win.resizable(False, False)
-        win.configure(bg=BG)
-        win.overrideredirect(True)
-        win.transient(self.root)
-
-        W, H = 350, 600
-        self.root.update_idletasks()
-        rx, ry = self.root.winfo_x(), self.root.winfo_y()
-        rw, rh = self.root.winfo_width(), self.root.winfo_height()
-        x = rx + (rw - W) // 2
-        y = ry + (rh - H) // 2
-        win.geometry(f"{W}x{H}+{max(0, x)}+{max(0, y)}")
-
-        self._apply_frameless_style(win)
-
-        drag = {"x": 0, "y": 0}
-
-        def _s_start_move(event):
-            drag["x"] = event.x_root - win.winfo_x()
-            drag["y"] = event.y_root - win.winfo_y()
-
-        def _s_on_move(event):
-            win.geometry(f"+{event.x_root - drag['x']}+{event.y_root - drag['y']}")
-
-        # ── Barra de título personalizada ──
-        titlebar = tk.Frame(win, bg=BG, height=36)
-        titlebar.pack(fill="x", side="top")
-        titlebar.pack_propagate(False)
-        titlebar.bind("<ButtonPress-1>", _s_start_move)
-        titlebar.bind("<B1-Motion>", _s_on_move)
-
-        tb_title = tk.Label(titlebar, text="Estadísticas",
-                            font=("Cascadia Code", 9), fg=TEXT_DIM, bg=BG)
-        tb_title.pack(side="left", padx=12)
-        tb_title.bind("<ButtonPress-1>", _s_start_move)
-        tb_title.bind("<B1-Motion>", _s_on_move)
-
-        tb_close = tk.Label(titlebar, text="✕", font=("Segoe UI Symbol", 10, "bold"),
-                            fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
-        tb_close.pack(side="right", fill="y")
-        tb_close.bind("<Button-1>", lambda _: win.destroy())
-        tb_close.bind("<Enter>", lambda _: tb_close.config(bg=RED, fg=WHITE))
-        tb_close.bind("<Leave>", lambda _: tb_close.config(bg=BG, fg=TEXT_DIM))
+        self._stats_built = True
+        body = self._pages["stats"].inner
 
         # Encabezado
-        header = tk.Frame(win, bg=BG)
-        header.pack(fill="x", padx=20, pady=(6, 4))
+        header = tk.Frame(body, bg=BG)
+        header.pack(fill="x", padx=20, pady=(14, 4))
         tk.Label(header, text="📊  ESTADÍSTICAS", font=("Cascadia Code", 12, "bold"),
                  fg=GOLD, bg=BG).pack(side="left")
-        self._stats_period_lbl = tk.Label(header, text="", font=("Cascadia Code", 9),
-                                          fg=TEXT_DIM, bg=BG)
-        self._stats_period_lbl.pack(side="right")
 
-        Divider(win).pack(fill="x", padx=20, pady=(6, 12))
+        Divider(body).pack(fill="x", padx=20, pady=(6, 12))
 
         # ── Selector de periodo ──
-        per_card = tk.Frame(win, bg=CARD)
+        per_card = tk.Frame(body, bg=CARD)
         per_card.pack(fill="x", padx=20, pady=0)
         tk.Label(per_card, text="PERIODO",
                  font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=CARD
@@ -797,8 +906,34 @@ class App:
             btn.bind("<Button-1>", lambda _, k=key: self._select_period(k))
             self._period_btns[key] = btn
 
+        # ── Navegación por periodo ──
+        nav_row = tk.Frame(per_card, bg=CARD)
+        nav_row.pack(fill="x", padx=16, pady=(0, 12))
+
+        self._stats_prev = tk.Label(nav_row, text="<", font=("Cascadia Code", 10, "bold"),
+                                    fg=TEXT_DIM, bg=CARD, cursor="hand2", width=3)
+        self._stats_prev.pack(side="left")
+        self._stats_prev.bind("<Button-1>", lambda _: self._stats_step(-1))
+        self._stats_prev.bind("<Enter>", lambda _: self._stats_prev.config(fg=WHITE)
+                              if not self._stats_at_first() else None)
+        self._stats_prev.bind("<Leave>", lambda _: self._stats_prev.config(
+            fg=BORDER if self._stats_at_first() else TEXT_DIM))
+
+        self._stats_period_lbl = tk.Label(nav_row, text="", font=("Cascadia Code", 9, "bold"),
+                                          fg=CYAN, bg=CARD)
+        self._stats_period_lbl.pack(side="left", fill="x", expand=True)
+
+        self._stats_next = tk.Label(nav_row, text=">", font=("Cascadia Code", 10, "bold"),
+                                    fg=TEXT_DIM, bg=CARD, cursor="hand2", width=3)
+        self._stats_next.pack(side="right")
+        self._stats_next.bind("<Button-1>", lambda _: self._stats_step(1))
+        self._stats_next.bind("<Enter>", lambda _: self._stats_next.config(fg=WHITE)
+                              if not self._stats_at_present() else None)
+        self._stats_next.bind("<Leave>", lambda _: self._stats_next.config(
+            fg=BORDER if self._stats_at_present() else TEXT_DIM))
+
         # ── Tarjeta de valores ──
-        stats_card = tk.Frame(win, bg=CARD)
+        stats_card = tk.Frame(body, bg=CARD)
         stats_card.pack(fill="x", padx=20, pady=(10, 0))
 
         self._stats_values = {}
@@ -821,7 +956,7 @@ class App:
         tk.Frame(stats_card, bg=CARD, height=8).pack()
 
         # ── Restablecer ──
-        reset_btn = tk.Label(win, text="↺  Restablecer estadísticas",
+        reset_btn = tk.Label(body, text="↺  Restablecer estadísticas",
                              font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=BORDER,
                              cursor="hand2", pady=8)
         reset_btn.pack(fill="x", padx=20, pady=(10, 0))
@@ -831,14 +966,14 @@ class App:
             if not reset_state["confirm"]:
                 reset_state["confirm"] = True
                 reset_btn.config(text="¿Tocar de nuevo para confirmar?", fg=RED)
-                win.after(3000, lambda: (reset_state.update(confirm=False),
+                self.root.after(3000, lambda: (reset_state.update(confirm=False),
                                          reset_btn.config(
                                              text="↺  Restablecer estadísticas",
                                              fg=TEXT_DIM))
-                          if win.winfo_exists() else None)
+                          if self._page == "stats" else None)
                 return
-            self._stats = {"activations": [], "matches": [], "sessions": []}
-            self._save_stats()
+            self._stats_store.reset()
+            self._stats = self._stats_store.data
             reset_state["confirm"] = False
             reset_btn.config(text="↺  Restablecer estadísticas", fg=TEXT_DIM)
             self._refresh_stats_win()
@@ -850,18 +985,10 @@ class App:
         reset_btn.bind("<Leave>", lambda _: reset_btn.config(bg=BORDER, fg=TEXT_DIM)
                        if not reset_state["confirm"] else None)
 
-        win.update_idletasks()
-        win.deiconify()
-        win.lift()
-        win.focus_force()
-        win.after(10, lambda: (win.lift(), win.focus_force())
-                 if win.winfo_exists() else None)
-
-        self._select_period(self._stats_period)
-        self._stats_tick(win)
 
     def _select_period(self, period):
         self._stats_period = period
+        self._stats_ref = datetime.now()
         for key, btn in getattr(self, "_period_btns", {}).items():
             if key == period:
                 btn.config(bg="#152636", fg=CYAN)
@@ -869,12 +996,71 @@ class App:
                 btn.config(bg=BORDER, fg=TEXT_DIM)
         self._refresh_stats_win()
 
+    @staticmethod
+    def _add_months(ref, n):
+        """Suma n meses sin desbordar el dia (31 ene -> 28 feb)."""
+        m = ref.month - 1 + n
+        y, m = ref.year + m // 12, m % 12 + 1
+        d = min(ref.day, calendar.monthrange(y, m)[1])
+        return ref.replace(year=y, month=m, day=d)
+
+    def _stats_at_present(self):
+        """True si el periodo visible ya es el actual (no se puede avanzar)."""
+        try:
+            p, ref = self._stats_period, self._stats_ref
+            now = datetime.now()
+            return self._period_bounds(p, ref)[0] >= self._period_bounds(p, now)[0]
+        except Exception:
+            return True
+
+    def _stats_at_first(self):
+        """True si ya se muestra el periodo con los datos mas antiguos."""
+        try:
+            first = self._stats_store.earliest()
+            if first is None:
+                return True
+            p, ref = self._stats_period, self._stats_ref
+            start, end, _ = self._period_bounds(p, ref)
+            return start <= first < end
+        except Exception:
+            return True
+
+    def _stats_step(self, delta):
+        """Avanza/retrocede el periodo visible entre el inicio y el presente."""
+        try:
+            p, ref = self._stats_period, self._stats_ref
+            if p == "day":
+                cand = ref + timedelta(days=delta)
+            elif p == "week":
+                cand = ref + timedelta(weeks=delta)
+            elif p == "month":
+                cand = self._add_months(ref, delta)
+            else:
+                cand = self._add_months(ref, 12 * delta)
+            now = datetime.now()
+            if self._period_bounds(p, cand)[0] > self._period_bounds(p, now)[0]:
+                return
+            first = self._stats_store.earliest()
+            if first is not None and self._period_bounds(p, cand)[1] <= first:
+                return
+            self._stats_ref = cand
+        except Exception:
+            pass
+        self._refresh_stats_win()
+
     def _refresh_stats_win(self):
-        if self._stats_win is None or not self._stats_win.winfo_exists():
+        if self._page != "stats" or not self._stats_built:
             return
         try:
-            data = self._stats_for(self._stats_period)
+            data = self._stats_for(self._stats_period, ref=self._stats_ref)
             self._stats_period_lbl.config(text=data["label"])
+            try:
+                self._stats_next.config(
+                    fg=BORDER if self._stats_at_present() else TEXT_DIM)
+                self._stats_prev.config(
+                    fg=BORDER if self._stats_at_first() else TEXT_DIM)
+            except Exception:
+                pass
             vals = self._stats_values
             vals["matches"].config(text=str(data["matches"]))
             vals["activations"].config(text=str(data["activations"]))
@@ -886,14 +1072,19 @@ class App:
         except Exception:
             pass
 
-    def _stats_tick(self, win):
+    def _stats_tick(self):
+        if self._page != "stats":
+            self._stats_tick_on = False
+            return
         try:
-            if not win.winfo_exists():
+            if not self.root.winfo_exists():
+                self._stats_tick_on = False
                 return
         except Exception:
+            self._stats_tick_on = False
             return
         self._refresh_stats_win()
-        win.after(1000, lambda: self._stats_tick(win))
+        self.root.after(1000, self._stats_tick)
 
     def _make_slider(self, parent, label, var_name, lbl_name,
                      from_, to, resolution, default, fmt):
@@ -940,15 +1131,19 @@ class App:
         self._set_log_visible(not self._log_visible)
 
     def _set_log_visible(self, visible, save=True):
-        """Muestra/oculta el registro y compacta la ventana."""
+        """Muestra/oculta el registro y compacta la ventana (solo en home)."""
         self._log_visible = visible
+        if getattr(self, "_page", "home") != "home":
+            if save:
+                self._save_config()
+            return
         try:
             self.root.update_idletasks()
             if visible:
                 self.log_card.pack(fill="both", expand=True, padx=24, pady=(0, 20))
                 self.root.update_idletasks()
                 self.root.geometry(f"390x{self._win_h_full or 560}")
-                self.tb_log_btn.config(fg=GREEN)
+                self.log_toggle_btn.set_active(True)
             else:
                 cur = self.root.winfo_height()
                 if cur > 200:
@@ -956,7 +1151,7 @@ class App:
                 self.log_card.pack_forget()
                 self.root.update_idletasks()
                 self.root.geometry(f"390x{self.root.winfo_reqheight()}")
-                self.tb_log_btn.config(fg=TEXT_DIM)
+                self.log_toggle_btn.set_active(False)
         except Exception:
             pass
         if save:
@@ -1033,15 +1228,12 @@ class App:
     # Log
     # ──────────────────────────────────────────
 
+    _LOG_TAGS = ("info", "success", "warn", "error")
+
     def _log(self, message: str, tag="info"):
-        """Escribe un mensaje en el log (thread-safe)."""
-        # Detectar tipo de mensaje automáticamente
-        if any(x in message for x in ["✅", "🎮", "✅"]):
-            tag = "success"
-        elif any(x in message for x in ["⚠️", "📸"]):
-            tag = "warn"
-        elif any(x in message for x in ["❌", "Error"]):
-            tag = "error"
+        """Escribe un mensaje en el log (thread-safe) con nivel explícito."""
+        if tag not in self._LOG_TAGS:
+            tag = "info"
 
         timestamp = time.strftime("%H:%M:%S")
         line = f"[{timestamp}] {message}\n"
@@ -1081,22 +1273,8 @@ class App:
     # ──────────────────────────────────────────
 
     def _load_config(self):
-        """Lee config.json con valores validados; usa defaults si falta o es inválido."""
-        cfg = {"delay": 0.5, "threshold": 0.80,
-               "auto_deactivate": True, "close_to_tray": True,
-               "log_visible": True}
-        try:
-            with open(self._config_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                cfg["delay"] = min(3.0, max(0.1, float(data.get("delay", cfg["delay"]))))
-                cfg["threshold"] = min(0.99, max(0.50, float(data.get("threshold", cfg["threshold"]))))
-                cfg["auto_deactivate"] = bool(data.get("auto_deactivate", cfg["auto_deactivate"]))
-                cfg["close_to_tray"] = bool(data.get("close_to_tray", cfg["close_to_tray"]))
-                cfg["log_visible"] = bool(data.get("log_visible", cfg["log_visible"]))
-        except Exception:
-            pass
-        return cfg
+        """Lee config.json con valores validados (delega en config_store)."""
+        return load_config(self._config_path)
 
     def _schedule_save_config(self, delay_ms=400):
         """Debounce de guardado para sliders (evita I/O en cada tick)."""
@@ -1115,70 +1293,47 @@ class App:
         self._save_config()
 
     def _save_config(self):
-        """Guarda los ajustes actuales en config.json (escritura atómica)."""
+        """Guarda los ajustes actuales en config.json (delega en config_store)."""
         try:
-            data = {
-                "delay": round(float(self.delay_val.get()), 2),
-                "threshold": round(float(self.thresh_val.get()), 2),
-                "auto_deactivate": bool(self.auto_deactivate_var.get()),
-                "close_to_tray": bool(self.close_to_tray_var.get()),
-                "log_visible": bool(getattr(self, "_log_visible", True)),
-            }
-            _atomic_write_json(self._config_path, data)
+            save_config(
+                self._config_path,
+                delay=float(self.delay_val.get()),
+                threshold=float(self.thresh_val.get()),
+                auto_deactivate=bool(self.auto_deactivate_var.get()),
+                close_to_tray=bool(self.close_to_tray_var.get()),
+                log_visible=bool(getattr(self, "_log_visible", True)),
+                pos=list(getattr(self, "_win_pos", None) or []) or None,
+            )
         except Exception:
             pass
 
     # ──────────────────────────────────────────
-    # Estadísticas de uso (stats.json)
+    # Estadísticas de uso (stats.json) — delegan en stats_store.StatsStore
     # ──────────────────────────────────────────
 
-    _MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio",
-              "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+    _MESES = StatsStore.MESES
 
     def _load_stats(self):
-        """Lee stats.json; estructura válida o vacía si falta/es inválido."""
-        stats = {"activations": [], "matches": [], "sessions": []}
-        try:
-            with open(self._stats_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                for key in stats:
-                    val = data.get(key, [])
-                    if isinstance(val, list):
-                        stats[key] = val
-        except Exception:
-            pass
-        return stats
+        """Recarga stats.json en el store y devuelve el dict (compat)."""
+        self._stats_store.load()
+        self._stats = self._stats_store.data
+        return self._stats
 
     def _save_stats(self):
         """Guarda los eventos de uso en stats.json (atómico + podado)."""
-        try:
-            self._prune_stats()
-            _atomic_write_json(self._stats_path, self._stats)
-        except Exception:
-            pass
+        self._stats_store.save()
 
-    def _prune_stats(self, limit=_MAX_STATS_EVENTS):
+    def _prune_stats(self, limit=MAX_STATS_EVENTS):
         """Limita el crecimiento sin cota: conserva solo los últimos N eventos."""
-        try:
-            for key in ("activations", "matches", "sessions"):
-                val = self._stats.get(key)
-                if isinstance(val, list) and len(val) > limit:
-                    self._stats[key] = val[-limit:]
-        except Exception:
-            pass
+        self._stats_store.prune(limit)
+        self._stats = self._stats_store.data
 
     def _close_session(self):
         """Cierra la sesión activa actual y la persiste."""
         if self._session_start is None:
             return
         try:
-            end = datetime.now()
-            self._stats["sessions"].append({
-                "start": self._session_start.isoformat(),
-                "end": end.isoformat(),
-                "seconds": round((end - self._session_start).total_seconds(), 1),
-            })
+            self._stats_store.close_session(self._session_start, datetime.now())
             self._save_stats()
         except Exception:
             pass
@@ -1187,78 +1342,22 @@ class App:
 
     @staticmethod
     def _parse_ts(value):
-        try:
-            return datetime.fromisoformat(value)
-        except Exception:
-            return None
+        return StatsStore.parse_ts(value)
 
     @classmethod
     def _period_bounds(cls, period, ref=None):
         """Devuelve (inicio, fin, etiqueta) del periodo calendario que contiene a ref."""
-        ref = ref or datetime.now()
-        if period == "week":
-            start = datetime(ref.year, ref.month, ref.day) - timedelta(days=ref.weekday())
-            end = start + timedelta(days=7)
-            label = (f"{start.day} – {end.day - 1} "
-                     f"{cls._MESES[start.month - 1]} {start.year}")
-        elif period == "month":
-            start = datetime(ref.year, ref.month, 1)
-            end = datetime(ref.year + (ref.month == 12), ref.month % 12 + 1, 1)
-            label = f"{cls._MESES[ref.month - 1]} {ref.year}"
-        elif period == "year":
-            start = datetime(ref.year, 1, 1)
-            end = datetime(ref.year + 1, 1, 1)
-            label = str(ref.year)
-        else:  # day
-            start = datetime(ref.year, ref.month, ref.day)
-            end = start + timedelta(days=1)
-            label = f"{start.day} {cls._MESES[start.month - 1]} {start.year}"
-        return start, end, label
+        return StatsStore.period_bounds(period, ref)
 
-    def _stats_for(self, period):
-        """Agrega eventos del periodo: partidas, activaciones y tiempo activo."""
-        start, end, label = self._period_bounds(period)
-        matches = sum(1 for ts in self._stats["matches"]
-                      if (dt := self._parse_ts(ts)) is not None and start <= dt < end)
-        activations = sum(1 for ts in self._stats["activations"]
-                          if (dt := self._parse_ts(ts)) is not None and start <= dt < end)
-        seconds, sessions = 0.0, 0
-        for s in self._stats["sessions"]:
-            s0 = self._parse_ts(s.get("start", ""))
-            s1 = self._parse_ts(s.get("end", ""))
-            if s0 is None or s1 is None:
-                continue
-            overlap = (min(s1, end) - max(s0, start)).total_seconds()
-            if overlap > 0:
-                seconds += overlap
-                sessions += 1
-        live = 0.0
-        if self.bot_active and self._session_start is not None:
-            live = max(0.0, (min(datetime.now(), end) - max(self._session_start, start)
-                              ).total_seconds())
-            seconds += live
-        return {
-            "label": label,
-            "matches": matches,
-            "activations": activations,
-            "seconds": seconds,
-            "sessions": sessions,
-            "live": live,
-            "avg_per_activation": (matches / activations) if activations else 0.0,
-            "avg_session": (seconds / sessions) if sessions else 0.0,
-        }
+    def _stats_for(self, period, ref=None):
+        """Agrega eventos del periodo visible (delega en el store)."""
+        live_start = self._session_start if self.bot_active else None
+        return self._stats_store.stats_for(period, ref=ref, live_start=live_start)
 
     @staticmethod
     def _fmt_duration(seconds):
         """Formatea segundos como '2 h 15 min', '45 min 10 s' o '35 s'."""
-        seconds = int(max(0, seconds))
-        h, rem = divmod(seconds, 3600)
-        m, s = divmod(rem, 60)
-        if h:
-            return f"{h} h {m} min" if m else f"{h} h"
-        if m:
-            return f"{m} min {s} s" if s else f"{m} min"
-        return f"{s} s"
+        return StatsStore.fmt_duration(seconds)
 
     def _apply_frameless_style(self, window=None):
         """Mantiene el icono en la barra de tareas y esquinas redondeadas en Win11."""
@@ -1304,6 +1403,42 @@ class App:
     def _on_move(self, event):
         self.root.geometry(f"+{event.x_root - self._drag_x}+{event.y_root - self._drag_y}")
 
+    def _restore_pos(self, pos):
+        """Restaura la posición guardada (limitada a la pantalla visible)."""
+        try:
+            if not (isinstance(pos, (list, tuple)) and len(pos) == 2):
+                return
+            x, y = int(pos[0]), int(pos[1])
+            sw = self.root.winfo_screenwidth()
+            sh = self.root.winfo_screenheight()
+            x = min(max(x, -50), max(0, sw - 100))
+            y = min(max(y, -50), max(0, sh - 100))
+            self.root.geometry(f"+{x}+{y}")
+            self._win_pos = [x, y]
+        except Exception:
+            pass
+
+    def _schedule_pos_save(self):
+        try:
+            if self._pos_job is not None:
+                self.root.after_cancel(self._pos_job)
+        except Exception:
+            pass
+        try:
+            self._pos_job = self.root.after(1000, self._save_pos_now)
+        except Exception:
+            pass
+
+    def _save_pos_now(self):
+        self._pos_job = None
+        try:
+            if not self.root.winfo_viewable():
+                return
+            self._win_pos = [self.root.winfo_x(), self.root.winfo_y()]
+        except Exception:
+            return
+        self._save_config()
+
     def _close_app(self):
         # Según ajustes: ocultar en bandeja o salir del todo
         if self.close_to_tray_var.get():
@@ -1312,6 +1447,7 @@ class App:
             self._quit_app()
 
     def _quit_app(self):
+        self._save_pos_now()
         try:
             if self.bot_active:
                 self.bot.stop()
@@ -1320,8 +1456,8 @@ class App:
         except Exception:
             pass
         try:
-            if self._tray_icon is not None:
-                self._tray_icon.stop()
+            if self._tray is not None:
+                self._tray.stop()
         except Exception:
             pass
         try:
@@ -1330,141 +1466,48 @@ class App:
             pass
 
     # ──────────────────────────────────────────
-    # Bandeja del sistema (system tray)
+    # Bandeja del sistema (delegada en tray.SystemTray)
     # ──────────────────────────────────────────
 
-    def _base_icon(self):
-        """Carga el icono nuevo primero (PIL, RGBA)."""
-        for candidate in (
-            _bundled_path("app_icon.png"),
-            _bundled_path("templates", "logo.png"),
-        ):
-            if os.path.exists(candidate):
-                try:
-                    return Image.open(candidate).convert("RGBA")
-                except Exception:
-                    pass
-        return Image.new("RGBA", (256, 256), (200, 155, 60, 255))
-
-    @staticmethod
-    def _badged_size(base, size):
-        """Variante 'activo': base reescalada a `size` y punto dibujado a ese
-        tamaño final (bordes nítidos, sin doble reescalado)."""
-        img = base.resize((size, size), Image.Resampling.LANCZOS)
-        s = size / 256.0
-        margin = max(1, int(round(10 * s)))
-        r_out = max(2, int(round(38 * s)))
-        r_in = max(1, int(round(29 * s)))
-        cx = cy = size - margin - r_out
-        draw = ImageDraw.Draw(img)
-        draw.ellipse([cx - r_out, cy - r_out, cx + r_out, cy + r_out],
-                     fill=(13, 17, 23, 255))
-        draw.ellipse([cx - r_in, cy - r_in, cx + r_in, cy + r_in],
-                     fill=(0, 230, 118, 255))
-        return img
-
-    def _build_status_icons(self):
-        """Prepara variantes inactivo/activo a máxima resolución."""
-        try:
-            base = self._base_icon()  # resolución nativa (523px)
-            self._tray_img_off = base.resize((64, 64), Image.Resampling.LANCZOS)
-            self._tray_img_on = self._badged_size(base, 64)
-            try:
-                # Varios tamaños para que Windows no tenga que reescalar
-                self._taskbar_photos_off = [
-                    ImageTk.PhotoImage(base.resize((s, s), Image.Resampling.LANCZOS))
-                    for s in (16, 24, 32, 48)]
-                self._taskbar_photos_on = [
-                    ImageTk.PhotoImage(self._badged_size(base, s))
-                    for s in (16, 24, 32, 48)]
-            except Exception:
-                pass
-        except Exception:
-            pass
-
-    def _tray_image(self):
-        """Icono para la bandeja (64x64). Usa el icono nuevo primero."""
-        if self._tray_img_off is not None:
-            return self._tray_img_off
-        for candidate in (
-            _bundled_path("app_icon.png"),
-            _bundled_path("templates", "logo.png"),
-        ):
-            if os.path.exists(candidate):
-                try:
-                    img = Image.open(candidate).convert("RGBA")
-                    return img.resize((64, 64), Image.Resampling.LANCZOS)
-                except Exception:
-                    pass
-        return Image.new("RGBA", (64, 64), (200, 155, 60, 255))
-
     def _apply_status_icons(self, active: bool):
-        """Punto verde en bandeja + barra de tareas + tooltip según estado.
-
-        Solo se usa iconphoto (nítido). El iconbitmap del .ico se deja fijo
-        desde el arranque: intercambiarlo en caliente pixelaba la barra.
-        """
+        """Punto verde en bandeja + barra de tareas + tooltip según estado."""
         try:
-            if self._tray_icon is not None:
-                img = self._tray_img_on if active else self._tray_img_off
-                if img is not None:
-                    self._tray_icon.icon = img
-                self._tray_icon.title = (
-                    "LoL Auto Queue — ACTIVO" if active
-                    else "LoL Auto Queue — INACTIVO")
-        except Exception:
-            pass
-        try:
-            photos = self._taskbar_photos_on if active else self._taskbar_photos_off
-            if photos:
-                self.root.iconphoto(True, *photos)
+            if self._tray is not None:
+                self._tray.apply_status(active)
         except Exception:
             pass
 
     def _setup_tray(self):
         try:
-            self._build_status_icons()
-            menu = TrayMenu(
-                TrayItem('Mostrar ventana',
-                         lambda icon, _: self.root.after(0, self._show_window),
-                         default=True, visible=False),
-                TrayItem(
-                    lambda _: "Desactivar bot" if self.bot_active else "Activar bot",
-                    lambda icon, _: self.root.after(0, self._toggle)),
-                TrayItem("Abrir configuraciones",
-                         lambda icon, _: self.root.after(0, self._open_settings)),
-                TrayItem("Cerrar", lambda icon, _: self.root.after(0, self._quit_app)),
+            from PIL import ImageTk as _ImageTk
+
+            def _set_visible(visible):
+                self._window_visible = visible
+
+            self._tray = SystemTray(
+                self.root,
+                is_active=lambda: self.bot_active,
+                on_show=self._show_window,
+                on_toggle=self._toggle,
+                on_settings=self._open_settings_page,
+                on_quit=self._quit_app,
+                on_log=self._log,
+                on_map=lambda: _set_visible(True),
+                on_unmap=lambda: _set_visible(False),
+                photo_factory=_ImageTk.PhotoImage,
             )
-            self._tray_icon = pystray.Icon(
-                "LoL Auto Queue", self._tray_image(),
-                "LoL Auto Queue — INACTIVO", menu)
-            threading.Thread(target=self._tray_icon.run, daemon=True).start()
-            self.root.bind("<Map>", lambda _: self._on_window_map())
-            self.root.bind("<Unmap>", lambda _: self._on_window_unmap())
+            self._tray.setup()
         except Exception as e:
             self._log(f"⚠️ No se pudo crear el icono de bandeja: {e}", tag="warn")
 
     def _refresh_tray_menu(self):
         try:
-            if self._tray_icon is not None:
-                self._tray_icon.update_menu()
+            if self._tray is not None:
+                self._tray.refresh_menu()
         except Exception:
             pass
-
-    def _on_window_map(self):
-        self._window_visible = True
-        self._refresh_tray_menu()
-
-    def _on_window_unmap(self):
-        self._window_visible = False
-        self._refresh_tray_menu()
 
     def _hide_to_tray(self):
-        try:
-            if self._settings_win is not None and self._settings_win.winfo_exists():
-                self._settings_win.withdraw()
-        except Exception:
-            pass
         self.root.withdraw()
         self._window_visible = False
         self._refresh_tray_menu()
@@ -1505,8 +1548,8 @@ class App:
             pass
         self.root.mainloop()
         try:
-            if self._tray_icon is not None:
-                self._tray_icon.stop()
+            if self._tray is not None:
+                self._tray.stop()
         except Exception:
             pass
 
@@ -1521,7 +1564,6 @@ _SINGLE_INSTANCE_PORT = 51237
 def _try_primary_socket():
     """Reserva el puerto local. Si está ocupado, avisa a la instancia
     abierta (para que muestre su ventana) y devuelve None."""
-    import socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     # Sin SO_REUSEADDR: en Windows permitiría dos binds simultáneos.
     try:

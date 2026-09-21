@@ -99,6 +99,7 @@ auto-queue/
 - **OpenCV + NumPy** — Template Matching and color detection
 - **PyAutoGUI + Pillow** — screenshots and clicking
 - **pystray** — system tray icon
+- **Font Awesome Free** — interface icons ([CC BY 4.0](https://fontawesome.com/license/free))
 
 ---
 
