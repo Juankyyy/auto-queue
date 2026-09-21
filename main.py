@@ -319,6 +319,7 @@ class App:
         saved = self._load_config()
         self.bot_active = False
         self.bot_thread = None
+        self._save_cfg_job = None
         self._log_visible = bool(saved.get("log_visible", True))
         self._win_h_full = 560
         self.delay_val = tk.DoubleVar(value=saved["delay"])
@@ -919,7 +920,7 @@ class App:
                 self.bot.delay = float(v)
             else:
                 self.bot.threshold = float(v)
-            self._save_config()
+            self._schedule_save_config()
 
         scale = tk.Scale(
             parent, from_=from_, to=to, resolution=resolution,
@@ -965,9 +966,12 @@ class App:
         if self.bot_active:
             self.bot.stop()
             self.bot_active = False
+            self._join_bot_thread(timeout=2.0)
             self._close_session()
             self._update_status(False)
         else:
+            # Evitar dos loops concurrentes si un hilo viejo aún termina.
+            self._join_bot_thread(timeout=2.0)
             self.bot_active = True
             self._session_start = datetime.now()
             self._stats["activations"].append(self._session_start.isoformat())
@@ -979,6 +983,18 @@ class App:
             self.bot_thread = threading.Thread(target=self.bot.start, daemon=True)
             self.bot_thread.start()
         self._refresh_tray_menu()
+
+    def _join_bot_thread(self, timeout=2.0):
+        """Espera al hilo del bot sin bloquear indefinidamente la UI."""
+        thread, self.bot_thread = self.bot_thread, None
+        try:
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=timeout)
+            # Conservar referencia solo si sigue vivo (evita hilos zombies).
+            if thread is not None and thread.is_alive():
+                self.bot_thread = thread
+        except Exception:
+            pass
 
     def _calibrate(self, _=None):
         if self.bot_active:
@@ -1081,6 +1097,22 @@ class App:
         except Exception:
             pass
         return cfg
+
+    def _schedule_save_config(self, delay_ms=400):
+        """Debounce de guardado para sliders (evita I/O en cada tick)."""
+        try:
+            if self._save_cfg_job is not None:
+                self.root.after_cancel(self._save_cfg_job)
+        except Exception:
+            pass
+        try:
+            self._save_cfg_job = self.root.after(delay_ms, self._save_config_now)
+        except Exception:
+            pass
+
+    def _save_config_now(self):
+        self._save_cfg_job = None
+        self._save_config()
 
     def _save_config(self):
         """Guarda los ajustes actuales en config.json (escritura atómica)."""
@@ -1283,6 +1315,7 @@ class App:
         try:
             if self.bot_active:
                 self.bot.stop()
+            self._join_bot_thread(timeout=2.0)
             self._close_session()
         except Exception:
             pass

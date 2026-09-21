@@ -5,6 +5,8 @@ bot.py — Lógica principal del bot de auto-aceptación para LoL
 import cv2
 import numpy as np
 import pyautogui
+import random
+import threading
 import time
 import os
 import sys
@@ -48,26 +50,47 @@ class LoLAutoAccept:
         """
         self.log = log_callback or print
         self.on_accepted = accepted_callback or (lambda _: None)
-        self.running = False
+        self._run_event = threading.Event()
         self.partidas_aceptadas = 0
         self.delay = 0.5          # segundos antes de hacer clic
         self.threshold = 0.80     # confianza mínima (0-1)
         self.poll_interval = 0.5  # segundos entre capturas
         self.auto_deactivate = True # si True, se apaga tras aceptar una partida
 
+    @property
+    def running(self):
+        """Compatibilidad: True mientras el loop debe seguir activo."""
+        return self._run_event.is_set()
+
+    @running.setter
+    def running(self, value):
+        if value:
+            self._run_event.set()
+        else:
+            self._run_event.clear()
+
     # ------------------------------------------------------------------
     # Control del loop
     # ------------------------------------------------------------------
 
     def start(self):
-        self.running = True
+        self._run_event.set()
         self.log("🟢 Bot activado. Monitoreando pantalla...")
         self._loop()
 
     def stop(self):
-        if self.running:
-            self.running = False
+        if self._run_event.is_set():
+            self._run_event.clear()
             self.log("🔴 Bot detenido.")
+
+    def _sleep_interruptible(self, seconds):
+        """Espera por tramos para que stop() interrumpa sin demora larga."""
+        end = time.monotonic() + max(0.0, seconds)
+        while self._run_event.is_set():
+            remaining = end - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(0.05, remaining))
 
     # ------------------------------------------------------------------
     # Loop principal
@@ -76,7 +99,7 @@ class LoLAutoAccept:
     def _loop(self):
         template = self._load_template()
 
-        while self.running:
+        while self._run_event.is_set():
             try:
                 screenshot = self._capture_screen()
 
@@ -87,37 +110,38 @@ class LoLAutoAccept:
                     found, location = self._detect_by_color(screenshot)
 
                 if found and location:
-                    import random
                     actual_delay = max(0.05, self.delay + random.uniform(-0.1, 0.2))
                     self.log(f"✅ ¡Partida encontrada! Aceptando en {actual_delay:.2f}s...")
-                    time.sleep(actual_delay)
+                    self._sleep_interruptible(actual_delay)
+                    if not self._run_event.is_set():
+                        break
                     try:
                         self._click(location)
                     except pyautogui.FailSafeException:
                         self.log("⚠️ Failsafe de pyautogui: mouse en la esquina, bot detenido.")
-                        self.running = False
+                        self._run_event.clear()
                         break
                     self.partidas_aceptadas += 1
                     self.log(f"🎮 Partida #{self.partidas_aceptadas} aceptada.")
 
                     if self.auto_deactivate:
-                        self.running = False
+                        self._run_event.clear()
                         self.on_accepted(True)
                         break
                     else:
                         self.on_accepted(False)
                         self.log("⏳ En espera... Manteniendo bot activo por si se cancela la cola.")
-                        # Esperar a que la ventana de diálogo desaparezca
-                        time.sleep(6)
+                        # Esperar a que la ventana de diálogo desaparezca (interrumpible)
+                        self._sleep_interruptible(6)
 
             except pyautogui.FailSafeException:
                 self.log("⚠️ Failsafe de pyautogui: bot detenido.")
-                self.running = False
+                self._run_event.clear()
                 break
             except Exception as e:
                 self.log(f"⚠️ Error: {e}")
 
-            time.sleep(self.poll_interval)
+            self._sleep_interruptible(self.poll_interval)
 
     # ------------------------------------------------------------------
     # Captura de pantalla
@@ -248,5 +272,4 @@ class LoLAutoAccept:
 
     @staticmethod
     def _random_offset(range_px=5):
-        import random
         return random.randint(-range_px, range_px)
