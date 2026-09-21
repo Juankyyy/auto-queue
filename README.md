@@ -11,6 +11,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Juankyyy/auto-queue/releases/latest"><img src="https://img.shields.io/github/v/release/Juankyyy/auto-queue?logo=github&logoColor=white" alt="Latest release" /></a>
   <img src="https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white" alt="Python 3.12" />
   <img src="https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4?logo=windows&logoColor=white" alt="Windows" />
   <img src="https://img.shields.io/badge/UI-Tkinter-green" alt="Tkinter" />
