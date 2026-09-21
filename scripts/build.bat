@@ -1,8 +1,8 @@
 @echo off
 REM Build local del .exe con PyInstaller (Windows) en entorno aislado.
-REM Uso: doble clic o "build.bat" desde la carpeta del proyecto
+REM Uso: doble clic o "build.bat" desde scripts/ (genera en la raiz)
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 where python >nul 2>&1
 if errorlevel 1 (
@@ -30,6 +30,6 @@ if errorlevel 1 (
 )
 
 echo [2/3] Generando EXE...
-.venv\Scripts\pyinstaller --noconfirm --clean LoLAutoQueue.spec
+.venv\Scripts\pyinstaller --noconfirm --clean scripts\LoLAutoQueue.spec
 
 echo [3/3] Listo. Tu ejecutable esta en: dist\LoLAutoQueue.exe

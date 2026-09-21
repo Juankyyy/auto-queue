@@ -1,15 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec para LoL Auto Queue -> un solo .exe con icono y assets."""
+"""PyInstaller spec para LoL Auto Queue -> un solo .exe con icono y assets.
+
+Vive en scripts/: las rutas a fuentes se resuelven contra la raiz (ROOT).
+"""
 
 import os
 
 block_cipher = None
 
+ROOT = os.path.dirname(SPECPATH)
+
 
 def _app_version():
     """Versión desde version.txt (la actualiza el workflow Auto Release)."""
     try:
-        with open(os.path.join(SPECPATH, 'version.txt'), encoding='utf-8') as f:
+        with open(os.path.join(ROOT, 'version.txt'), encoding='utf-8') as f:
             return f.read().strip() or '0.0.0'
     except OSError:
         return '0.0.0'
@@ -63,15 +68,12 @@ with open(_version_info_path, 'w', encoding='utf-8') as f:
 """)
 
 a = Analysis(
-    ['main.py'],
-    pathex=[],
+    [os.path.join(ROOT, 'src', 'main.py')],
+    pathex=[os.path.join(ROOT, 'src')],
     binaries=[],
     datas=[
-        ('templates', 'templates'),
-        ('fonts', 'fonts'),
-        ('app_icon.png', '.'),
-        ('app_icon.ico', '.'),
-        ('version.txt', '.'),
+        (os.path.join(ROOT, 'assets'), 'assets'),
+        (os.path.join(ROOT, 'version.txt'), '.'),
     ],
     hiddenimports=[
         'PIL._tkinter_finder',
@@ -109,6 +111,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='app_icon.ico',
+    icon=os.path.join(ROOT, 'assets', 'icons', 'app_icon.ico'),
     version=_version_info_path,
 )

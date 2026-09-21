@@ -25,8 +25,8 @@ TASKBAR_SIZES = (16, 24, 32, 48)
 def load_base_icon() -> "Image.Image":
     """Carga el icono de la app (PNG nuevo primero, respaldo sólido)."""
     for candidate in (
-        bundled_path("app_icon.png"),
-        bundled_path("templates", "logo.png"),
+        bundled_path("assets", "icons", "app_icon.png"),
+        bundled_path("assets", "templates", "logo.png"),
     ):
         if os.path.exists(candidate):
             try:

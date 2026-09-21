@@ -40,10 +40,14 @@ pyautogui.FAILSAFE = True
 
 def _resolve_template_path():
     """El template se puede recalibrar: prioriza el de junto al .exe, si no el empaquetado."""
-    user_copy = os.path.join(user_data_dir(), "templates", "accept_btn.png")
+    user_copy = os.path.join(user_data_dir(), "assets", "templates", "accept_btn.png")
     if os.path.exists(user_copy):
         return user_copy
-    return bundled_path("templates", "accept_btn.png")
+    # Compat: recalibraciones guardadas con la estructura anterior (raiz/templates).
+    legacy_copy = os.path.join(user_data_dir(), "templates", "accept_btn.png")
+    if os.path.exists(legacy_copy):
+        return legacy_copy
+    return bundled_path("assets", "templates", "accept_btn.png")
 
 
 TEMPLATE_PATH = _resolve_template_path()
@@ -314,8 +318,8 @@ class LoLAutoAccept:
         cropped = screenshot[y1:y2, x1:x2]
 
         # Guardar template (junto al .exe si está congelado, para que persista)
-        os.makedirs(os.path.join(user_data_dir(), "templates"), exist_ok=True)
-        save_path = os.path.join(user_data_dir(), "templates", "accept_btn.png")
+        os.makedirs(os.path.join(user_data_dir(), "assets", "templates"), exist_ok=True)
+        save_path = os.path.join(user_data_dir(), "assets", "templates", "accept_btn.png")
         cv2.imwrite(save_path, cropped)
         # Actualizar la ruta en caliente para esta sesión
         global TEMPLATE_PATH

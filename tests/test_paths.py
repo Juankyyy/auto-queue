@@ -13,7 +13,7 @@ def test_bundled_path_dev():
 
 def test_user_data_dir_dev(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    # En dev (.py, no frozen) es la carpeta del modulo paths.py
+    # En dev (.py, no frozen) es la raiz del repo (marcador pyproject.toml)
     assert os.path.isdir(user_data_dir())
 
 

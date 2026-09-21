@@ -1,7 +1,7 @@
 <p align="center">🌐 <a href="README.es.md"><strong>Leer en español</strong></a></p>
 
 <p align="center">
-  <img src="templates/logo.png" alt="LoL Auto Queue" width="160" />
+  <img src="assets/templates/logo.png" alt="LoL Auto Queue" width="160" />
 </p>
 
 <h1 align="center">LoL Auto Queue</h1>
@@ -54,11 +54,7 @@ Requirements: **Windows 10/11** with **Python 3.12**.
 pip install -r requirements.txt
 ```
 
-Or simply run:
-
-```bat
-Iniciar Bot.bat
-```
+Or simply double-click `LoLAutoQueue.bat`.
 
 To build the standalone `.exe` (isolated `.venv`):
 
@@ -92,24 +88,19 @@ Settings are saved automatically to `config.json`:
 
 ```
 auto-queue/
-├── main.py              # GUI (Tkinter, single-window pages)
-├── bot.py               # Detection (OpenCV) and auto-click
-├── paths.py             # Bundled/writable paths + atomic JSON writes
-├── config_store.py      # Validated settings persistence
-├── stats_store.py       # Usage stats persistence + aggregation
-├── tray.py              # System tray icon + status icons
-├── icons.py             # Font Awesome icon font loader (CC BY 4.0)
-├── fonts/               # Bundled icon font (fa-solid-900.ttf)
+├── src/                 # Código Python (main, bot, stores, tray, icons, paths)
+├── assets/              # Recursos empaquetados en el .exe
+│   ├── icons/           # app_icon.ico/.png
+│   ├── fonts/           # fa-solid-900.ttf (Font Awesome, CC BY 4.0)
+│   └── templates/       # logo.png, accept_btn.png (botón ¡ACEPTAR!)
+├── scripts/             # build.bat, LoLAutoQueue.spec
+├── LoLAutoQueue.bat   # Double-click launcher
 ├── tests/               # pytest: stores, bot matching, loop (headless)
+├── .github/             # CI + release workflows
 ├── requirements.txt     # Pinned dependencies
 ├── requirements-dev.txt # Dev dependencies (ruff, pytest, pyinstaller)
-├── Iniciar Bot.bat      # Windows launcher
-├── app_icon.ico/.png    # App icons
-├── config.json          # Settings (auto-generated)
-├── stats.json           # Statistics (auto-generated)
-└── templates/
-    ├── logo.png         # App logo
-    └── accept_btn.png   # ACCEPT! button template
+├── config.json          # Settings (auto-generated, git-ignored)
+└── stats.json           # Statistics (auto-generated, git-ignored)
 ```
 
 ## Tech stack
@@ -137,7 +128,7 @@ GPL-3.0 — see [LICENSE](LICENSE).
 ---
 
 <p align="center">
-  <img src="app_icon.png" alt="icon" width="48" />
+  <img src="assets/icons/app_icon.png" alt="icon" width="48" />
   <br />
   Made to never miss a queue. 🎮
 </p>

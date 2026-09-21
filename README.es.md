@@ -1,7 +1,7 @@
 <p align="center">🌐 <a href="README.md"><strong>Read in English</strong></a></p>
 
 <p align="center">
-  <img src="templates/logo.png" alt="LoL Auto Queue" width="160" />
+  <img src="assets/templates/logo.png" alt="LoL Auto Queue" width="160" />
 </p>
 
 <h1 align="center">LoL Auto Queue</h1>
@@ -54,11 +54,7 @@ Requisitos: **Windows 10/11** con **Python 3.12**.
 pip install -r requirements.txt
 ```
 
-O simplemente ejecuta:
-
-```bat
-Iniciar Bot.bat
-```
+O simplemente haz doble clic en `LoLAutoQueue.bat`.
 
 Para generar el `.exe` portable (en `.venv` aislado):
 
@@ -92,24 +88,18 @@ Los ajustes se guardan automáticamente en `config.json`:
 
 ```
 auto-queue/
-├── main.py              # Interfaz gráfica (Tkinter, ventana única)
-├── bot.py               # Detección (OpenCV) y clic automático
-├── paths.py             # Rutas empaquetadas/escribibles + JSON atómico
-├── config_store.py      # Persistencia validada de ajustes
-├── stats_store.py       # Persistencia y agregación de estadísticas
-├── tray.py              # Icono de bandeja + iconos de estado
-├── icons.py             # Cargador de fuente Font Awesome (CC BY 4.0)
-├── fonts/               # Fuente de iconos empaquetada (fa-solid-900.ttf)
+├── src/                 # Código Python (main, bot, stores, tray, icons, paths)
+├── assets/              # Recursos empaquetados en el .exe
+│   ├── icons/           # app_icon.ico/.png
+│   ├── fonts/           # fa-solid-900.ttf (Font Awesome, CC BY 4.0)
+│   └── templates/       # logo.png, accept_btn.png (botón ¡ACEPTAR!)
+├── scripts/             # build.bat, LoLAutoQueue.spec
+├── LoLAutoQueue.bat   # Lanzador con doble clic
 ├── tests/               # pytest: stores, bot y loop (sin display)
 ├── requirements.txt     # Dependencias pineadas
 ├── requirements-dev.txt # Dependencias dev (ruff, pytest, pyinstaller)
-├── Iniciar Bot.bat      # Lanzador en Windows
-├── app_icon.ico/.png    # Iconos de la app
-├── config.json          # Ajustes (se genera solo)
-├── stats.json           # Estadísticas (se genera solo)
-└── templates/
-    ├── logo.png         # Logo de la app
-    └── accept_btn.png   # Template del botón ¡ACEPTAR!
+├── config.json          # Ajustes (se genera solo, ignorado por git)
+└── stats.json           # Estadísticas (se genera solo, ignorado por git)
 ```
 
 ## Tecnologías
@@ -137,7 +127,7 @@ GPL-3.0 — ver [LICENSE](LICENSE).
 ---
 
 <p align="center">
-  <img src="app_icon.png" alt="icono" width="48" />
+  <img src="assets/icons/app_icon.png" alt="icono" width="48" />
   <br />
   Hecho para no perder ni una cola. 🎮
 </p>

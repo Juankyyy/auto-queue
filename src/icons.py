@@ -14,7 +14,7 @@ import os
 from paths import bundled_path
 
 FAMILY = "Font Awesome 6 Free Solid"
-_FONT_FILE = ("fonts", "fa-solid-900.ttf")
+_FONT_FILE = ("assets", "fonts", "fa-solid-900.ttf")
 
 # Codepoints PUA estables de Font Awesome 6 Free Solid.
 GLYPHS = {

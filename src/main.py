@@ -440,10 +440,10 @@ class App:
         self._apply_frameless_style()
 
         # Configurar icono de ventana y barra de tareas (nuevo icono primero)
-        ico_path = bundled_path("app_icon.ico")
+        ico_path = bundled_path("assets", "icons", "app_icon.ico")
         logo_path = None
-        for candidate in (bundled_path("app_icon.png"),
-                          bundled_path("templates", "logo.png")):
+        for candidate in (bundled_path("assets", "icons", "app_icon.png"),
+                          bundled_path("assets", "templates", "logo.png")):
             if os.path.exists(candidate):
                 logo_path = candidate
                 break
@@ -548,8 +548,8 @@ class App:
 
         # Logo de la app (nuevo icono primero)
         logo_loaded = False
-        for logo_path in (bundled_path("app_icon.png"),
-                          bundled_path("templates", "logo.png")):
+        for logo_path in (bundled_path("assets", "icons", "app_icon.png"),
+                          bundled_path("assets", "templates", "logo.png")):
             if not os.path.exists(logo_path):
                 continue
             try:

@@ -4,8 +4,8 @@ setlocal
 cd /d "%~dp0"
 where py >nul 2>&1
 if not errorlevel 1 (
-    py -3.12 main.py
+    py -3.12 src/main.py
     if not errorlevel 1 exit /b 0
 )
-python main.py
+python src/main.py
 if errorlevel 1 pause
