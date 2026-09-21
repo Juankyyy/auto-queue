@@ -1,40 +1,27 @@
 name: Release EXE
 
-# Se dispara solo (al pushear un tag desde tu PC) o manual
-# (Actions > Release EXE > Run workflow > tag: 0.1.1).
+# Acepta tags estilo "0.1.0" (el usado hasta ahora) y "v0.1.0".
 on:
   push:
     tags:
       - "v*.*.*"
       - "[0-9]*.*.*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Tag existente a publicar/reconstruir (ej. 0.1.1)"
-        required: true
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build-windows-exe:
     runs-on: windows-latest
     steps:
-      - name: Checkout del tag (historial completo para el changelog)
+      - name: Checkout (historial completo para el changelog)
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
           fetch-depth: 0
-
-      - name: Resolver TAG
-        id: tag
-        shell: bash
-        run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "value=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Setup Python 3.12
         uses: actions/setup-python@v5
@@ -49,7 +36,7 @@ jobs:
           pip install pyinstaller
 
       - name: Build EXE with PyInstaller
-        run: pyinstaller --noconfirm LoLAutoQueue.spec
+        run: pyinstaller --noconfirm scripts/LoLAutoQueue.spec
 
       - name: Check output
         shell: pwsh
@@ -59,41 +46,13 @@ jobs:
 
       - name: Generar notas de la release
         shell: pwsh
-        run: |
-          $tag = "${{ steps.tag.outputs.value }}"
-          # Notas personalizadas = mensaje del tag anotado (lo escribe el workflow Auto Release)
-          $tagMsg = (git tag -l --format='%(contents)' $tag | Out-String).Trim()
-          # Tag anterior para listar solo los cambios nuevos
-          $prev = (git describe --tags --abbrev=0 "$tag^" 2>$null | Out-String).Trim()
-          if ($prev) { $range = "$prev..$tag" } else { $range = $tag }
-          # Commits del rango: sin merges y sin los bumps automáticos de version.txt
-          $lines = @(git log $range --no-merges --invert-grep --grep="^release: " --pretty=format:'%H%x01%s' --reverse)
-          # Clasificación por Conventional Commits (feat: -> Novedades, fix: -> Bugs)
-          $feats = @(); $fixes = @(); $others = @()
-          foreach ($l in $lines) {
-            $p = $l -split "`x01", 2
-            if ($p.Count -lt 2) { continue }
-            $h = $p[0].Substring(0, 7)
-            $s = $p[1].Trim()
-            if ($s -match '^feat(\([^)]*\))?!?:\s*(.+)$') { $feats += "- $($Matches[2].Trim()) ($h)" }
-            elseif ($s -match '^fix(\([^)]*\))?!?:\s*(.+)$') { $fixes += "- $($Matches[2].Trim()) ($h)" }
-            else { $others += "- $s ($h)" }
-          }
-          $body = ""
-          if ($tagMsg) { $body += "$tagMsg`r`n`r`n" }
-          if ($feats.Count -gt 0) { $body += "## Novedades`r`n`r`n" + ($feats -join "`r`n") + "`r`n`r`n" }
-          if ($fixes.Count -gt 0) { $body += "## Bugs`r`n`r`n" + ($fixes -join "`r`n") + "`r`n`r`n" }
-          if ($others.Count -gt 0) { $body += "## Otros cambios`r`n`r`n" + ($others -join "`r`n") + "`r`n`r`n" }
-          if (-not $body) { $body = "_Sin cambios destacables en esta versión._" }
-          Set-Content -Path RELEASE_NOTES.md -Value $body -Encoding UTF8
-          Get-Content RELEASE_NOTES.md
+        run: ./.github/scripts/release-notes.ps1 -Tag "${{ github.ref_name }}"
 
       - name: Create GitHub Release with EXE
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.value }}
           files: dist/LoLAutoQueue.exe
-          name: ${{ steps.tag.outputs.value }}
+          name: LoL Auto Queue ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false

@@ -1,7 +1,7 @@
 <p align="center">🌐 <a href="README.md"><strong>Read in English</strong></a></p>
 
 <p align="center">
-  <img src="templates/logo.png" alt="LoL Auto Queue" width="160" />
+  <img src="assets/templates/logo.png" alt="LoL Auto Queue" width="160" />
 </p>
 
 <h1 align="center">LoL Auto Queue</h1>
@@ -11,7 +11,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Juankyyy/auto-queue/releases/latest"><img src="https://img.shields.io/github/v/release/Juankyyy/auto-queue?logo=github&logoColor=white" alt="Última release" /></a>
   <img src="https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white" alt="Python 3.12" />
   <img src="https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4?logo=windows&logoColor=white" alt="Windows" />
   <img src="https://img.shields.io/badge/UI-Tkinter-green" alt="Tkinter" />
@@ -26,7 +25,7 @@
 
 Detecta el botón **¡ACEPTAR!** por reconocimiento de imagen (OpenCV Template Matching, con respaldo por detección de color) y hace clic por ti con un pequeño retardo aleatorio para un comportamiento más natural.
 
-> ### ⚠️ Uso responsable — leer antes de usar
+> ### ⚠️ Uso responsable
 >
 > **Esta app solo está pensada para ausencias cortas** (ir al baño, ir a la cocina por algo de comer, etc.).
 >
@@ -35,15 +34,15 @@ Detecta el botón **¡ACEPTAR!** por reconocimiento de imagen (OpenCV Template M
 ## Características
 
 - ✅ **Auto-aceptación** del popup de partida encontrada.
-- 🎯 **Doble detección**: Template Matching (OpenCV) + respaldo por color cyan.
+- 🎯 **Detección triple-escala**: Template Matching en grises (0.85/1.0/1.18×) + respaldo por color cyan, con conciencia DPI.
 - ⏱️ **Delay configurable** (0.1 – 3.0 s) con variación aleatoria anti-detección.
 - 🎚️ **Umbral de detección ajustable** (50 – 99 %).
 - 🔒 **Auto-desactivación** tras aceptar, o modo continuo por si alguien cancela la cola.
 - 📸 **Calibración**: captura tu propio template si cambias de resolución.
-- 🖥️ **Ventana frameless** personalizada (sin bordes de Windows), arrastrable.
+- 🖥️ **Ventana única frameless** (sin bordes de Windows), arrastrable, con páginas de inicio/ajustes/estadísticas y soporte de teclado.
 - 🔔 **Bandeja del sistema**: icono con punto verde de estado, menú (activar/desactivar, configuraciones, cerrar) y clic para mostrar la ventana.
-- 📊 **Estadísticas** por día, semana, mes y año: partidas, activaciones, tiempo activo y promedios.
-- 💾 **Persistencia**: ajustes y estadísticas se guardan entre sesiones (`config.json`, `stats.json`).
+- 📊 **Estadísticas** por día, semana, mes y año con navegación por periodos: partidas, activaciones, tiempo activo y promedios.
+- 💾 **Persistencia**: ajustes, estadísticas y posición de la ventana se guardan entre sesiones (`config.json`, `stats.json`).
 - 📝 **Registro colapsable** de eventos en la ventana principal.
 - 🛡️ **Instancia única**: no se abre dos veces; reabrirla muestra la ventana existente.
 
@@ -55,18 +54,20 @@ Requisitos: **Windows 10/11** con **Python 3.12**.
 pip install -r requirements.txt
 ```
 
-O simplemente ejecuta:
+O simplemente haz doble clic en `LoLAutoQueue.bat`.
+
+Para generar el `.exe` portable (en `.venv` aislado):
 
 ```bat
-Iniciar Bot.bat
+build.bat
 ```
 
 ## Uso
 
-1. Abre la app y pulsa **ACTIVAR BOT**.
+1. Abre la app y pulsa **ACTIVAR BOT** (clic o `Enter`/`Espacio` con el botón enfocado).
 2. Entra en cola en League of Legends.
 3. Cuando aparezca la partida, el bot la acepta solo. 🎮
-4. (Opcional) Abre **⚙ Ajustes** para calibrar el template con **📸 Capturar Nuevo Template** teniendo el popup visible (te da 3 segundos).
+4. (Opcional) Abre la **página de ajustes** para calibrar el template con **Capturar Nuevo Template** teniendo el popup visible (te da 3 segundos).
 
 > ⚠️ Úsalo bajo tu responsabilidad. La automatización de clientes de juego puede ir en contra de los términos de servicio de Riot Games.
 
@@ -81,21 +82,24 @@ Los ajustes se guardan automáticamente en `config.json`:
 | `auto_deactivate` | Apagarse tras aceptar una partida        | `true`  |
 | `close_to_tray`   | La ✕ minimiza a bandeja en vez de salir  | `true`  |
 | `log_visible`     | Mostrar el registro al arrancar          | `true`  |
+| `pos`             | Última posición `[x, y]` (se guarda sola)| `null`  |
 
 ## Estructura del proyecto
 
 ```
 auto-queue/
-├── main.py              # Interfaz gráfica (Tkinter) + bandeja + stats
-├── bot.py               # Detección (OpenCV) y clic automático
-├── requirements.txt     # Dependencias
-├── Iniciar Bot.bat      # Lanzador en Windows
-├── app_icon.ico/.png    # Iconos de la app
-├── config.json          # Ajustes (se genera solo)
-├── stats.json           # Estadísticas (se genera solo)
-└── templates/
-    ├── logo.png         # Logo de la app
-    └── accept_btn.png   # Template del botón ¡ACEPTAR!
+├── src/                 # Código Python (main, bot, stores, tray, icons, paths)
+├── assets/              # Recursos empaquetados en el .exe
+│   ├── icons/           # app_icon.ico/.png
+│   ├── fonts/           # fa-solid-900.ttf (Font Awesome, CC BY 4.0)
+│   └── templates/       # logo.png, accept_btn.png (botón ¡ACEPTAR!)
+├── scripts/             # build.bat, LoLAutoQueue.spec
+├── LoLAutoQueue.bat   # Lanzador con doble clic
+├── tests/               # pytest: stores, bot y loop (sin display)
+├── requirements.txt     # Dependencias pineadas
+├── requirements-dev.txt # Dependencias dev (ruff, pytest, pyinstaller)
+├── config.json          # Ajustes (se genera solo, ignorado por git)
+└── stats.json           # Estadísticas (se genera solo, ignorado por git)
 ```
 
 ## Tecnologías
@@ -104,11 +108,26 @@ auto-queue/
 - **OpenCV + NumPy** — Template Matching y detección por color
 - **PyAutoGUI + Pillow** — captura de pantalla y clic
 - **pystray** — icono de bandeja del sistema
+- **Font Awesome Free** — iconos de la interfaz ([CC BY 4.0](https://fontawesome.com/license/free))
+
+## Desarrollo
+
+```bat
+pip install -r requirements-dev.txt
+python -m ruff check .
+python -m pytest tests -q
+```
+
+El CI ejecuta lint + tests en cada push/PR a `main`/`dev`.
+
+## Licencia
+
+GPL-3.0 — ver [LICENSE](LICENSE).
 
 ---
 
 <p align="center">
-  <img src="app_icon.png" alt="icono" width="48" />
+  <img src="assets/icons/app_icon.png" alt="icono" width="48" />
   <br />
   Hecho para no perder ni una cola. 🎮
 </p>
