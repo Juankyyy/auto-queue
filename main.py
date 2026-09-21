@@ -259,6 +259,39 @@ class Divider(tk.Frame):
         super().__init__(parent, bg=BORDER, height=1, **kwargs)
 
 
+class ScrollHost(tk.Frame):
+    """Contenedor con scroll por rueda (sin barra visible)."""
+
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, bg=BG, **kwargs)
+        self.canvas = tk.Canvas(self, bg=BG, highlightthickness=0,
+                                bd=0)
+        self.inner = tk.Frame(self.canvas, bg=BG)
+        self._win = self.canvas.create_window((0, 0), window=self.inner,
+                                              anchor="nw")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.inner.bind("<Configure>",
+                        lambda _: self.canvas.configure(
+                            scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>",
+                         lambda e: self.canvas.itemconfig(self._win,
+                                                          width=e.width))
+        self.inner.bind("<Enter>", lambda _: self._bind_wheel())
+        self.inner.bind("<Leave>", lambda _: self._unbind_wheel())
+
+    def _bind_wheel(self):
+        self.canvas.bind_all("<MouseWheel>", self._wheel)
+
+    def _unbind_wheel(self):
+        self.canvas.unbind_all("<MouseWheel>")
+
+    def _wheel(self, event):
+        try:
+            self.canvas.yview_scroll(-1 * (event.delta // 120), "units")
+        except Exception:
+            pass
+
+
 class App:
     def __init__(self):
         self.root = tk.Tk()
@@ -305,11 +338,17 @@ class App:
         self.bot_thread = None
         self._log_visible = bool(saved.get("log_visible", True))
         self._win_h_full = 560
+        self._win_pos = saved.get("pos")
         self.delay_val = tk.DoubleVar(value=saved["delay"])
         self.thresh_val = tk.DoubleVar(value=saved["threshold"])
         self.auto_deactivate_var = tk.BooleanVar(value=saved["auto_deactivate"])
         self.close_to_tray_var = tk.BooleanVar(value=saved["close_to_tray"])
-        self._settings_win = None
+        self._page = "home"
+        self._pages = {}
+        self._settings_built = False
+        self._stats_built = False
+        self._stats_tick_on = False
+        self._page_heights = {"home": 560, "settings": 720, "stats": 660}
         self._tray_icon = None
         self._window_visible = True
         # Estadísticas de uso (persistentes en stats.json)
@@ -319,7 +358,7 @@ class App:
             self._stats["first_seen"] = datetime.now().date().isoformat()
             self._save_stats()
         self._session_start = None
-        self._stats_win = None
+        # (las páginas viven dentro de la ventana principal)
         self._stats_period = "day"
         self._stats_ref = datetime.now()
         # Variantes del icono según estado (normal / activo con punto verde)
@@ -336,6 +375,9 @@ class App:
         self._build_ui()
         self._setup_tray()
         self._set_log_visible(self._log_visible, save=False)
+        self._restore_pos(saved.get("pos"))
+        self._pos_job = None
+        self.root.bind("<Configure>", lambda _: self._schedule_pos_save())
 
     # ──────────────────────────────────────────
     # Construcción de la UI Principal
@@ -355,6 +397,7 @@ class App:
         tb_title = tk.Label(titlebar, text="LoL Auto Queue",
                             font=("Cascadia Code", 9), fg=TEXT_DIM, bg=BG)
         tb_title.pack(side="left", padx=12)
+        self.tb_title = tb_title
         tb_title.bind("<ButtonPress-1>", self._start_move)
         tb_title.bind("<B1-Motion>", self._on_move)
 
@@ -369,24 +412,25 @@ class App:
         tb_cfg = tk.Label(titlebar, text="⚙", font=("Segoe UI Symbol", 11),
                           fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
         tb_cfg.pack(side="right", fill="y")
-        tb_cfg.bind("<Button-1>", self._open_settings)
+        self.tb_cfg = tb_cfg
+        tb_cfg.bind("<Button-1>", lambda _: self.show_page("settings"))
         tb_cfg.bind("<Enter>", lambda _: tb_cfg.config(bg=BORDER, fg=GOLD))
-        tb_cfg.bind("<Leave>", lambda _: tb_cfg.config(bg=BG, fg=TEXT_DIM))
+        tb_cfg.bind("<Leave>", lambda _: self._nav_leave(tb_cfg, "settings", GOLD))
 
         tb_stats = tk.Label(titlebar, text="📊", font=("Cascadia Code", 10),
                             fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
         tb_stats.pack(side="right", fill="y")
-        tb_stats.bind("<Button-1>", self._open_stats)
+        self.tb_stats = tb_stats
+        tb_stats.bind("<Button-1>", lambda _: self.show_page("stats"))
         tb_stats.bind("<Enter>", lambda _: tb_stats.config(bg=BORDER, fg=CYAN))
-        tb_stats.bind("<Leave>", lambda _: tb_stats.config(bg=BG, fg=TEXT_DIM))
+        tb_stats.bind("<Leave>", lambda _: self._nav_leave(tb_stats, "stats", CYAN))
 
-        self.tb_log_btn = tk.Label(titlebar, text="📝", font=("Cascadia Code", 10),
-                                   fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
-        self.tb_log_btn.pack(side="right", fill="y")
-        self.tb_log_btn.bind("<Button-1>", lambda _: self._toggle_log())
-        self.tb_log_btn.bind("<Enter>", lambda _: self.tb_log_btn.config(bg=BORDER, fg=GREEN))
-        self.tb_log_btn.bind("<Leave>", lambda _: self.tb_log_btn.config(
-            bg=BG, fg=GREEN if self._log_visible else TEXT_DIM))
+        self.tb_home = tk.Label(titlebar, text="⌂", font=("Segoe UI Symbol", 12),
+                                fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
+        self.tb_home.pack(side="right", fill="y")
+        self.tb_home.bind("<Button-1>", lambda _: self.show_page("home"))
+        self.tb_home.bind("<Enter>", lambda _: self.tb_home.config(bg=BORDER, fg=WHITE))
+        self.tb_home.bind("<Leave>", lambda _: self._nav_leave(self.tb_home, "home", WHITE))
 
         # ── Header ──────────────────────────────
         header = tk.Frame(root, bg=BG)
@@ -433,6 +477,15 @@ class App:
                                    fg=RED, bg=CARD)
         self.status_lbl.pack(side="left", padx=(8, 0))
 
+        self.log_toggle_btn = tk.Label(status_card, text="📝",
+                                       font=("Cascadia Code", 11),
+                                       fg=TEXT_DIM, bg=CARD, cursor="hand2")
+        self.log_toggle_btn.pack(side="right", padx=16)
+        self.log_toggle_btn.bind("<Button-1>", lambda _: self._toggle_log())
+        self.log_toggle_btn.bind("<Enter>", lambda _: self.log_toggle_btn.config(bg=BORDER, fg=GREEN))
+        self.log_toggle_btn.bind("<Leave>", lambda _: self.log_toggle_btn.config(
+            bg=CARD, fg=GREEN if self._log_visible else TEXT_DIM))
+
         # ── Botón toggle ─────────────────────────
         btn_frame = tk.Frame(root, bg=BG)
         btn_frame.pack(pady=(16, 20))
@@ -468,88 +521,106 @@ class App:
         self.log_box.tag_config("success", foreground=GREEN)
         self.log_box.tag_config("info", foreground="#3FB950")
 
+        # ── Overlay de páginas internas (ajustes / estadísticas) ──
+        self.page_overlay = tk.Frame(root, bg=BG)
+        self._pages = {}
+        for _name in ("settings", "stats"):
+            _scroll = ScrollHost(self.page_overlay)
+            _scroll.pack(fill="both", expand=True)
+            _scroll.pack_forget()
+            self._pages[_name] = _scroll
+
+        self._update_nav_highlight()
         self._log("Sistema iniciado. Presiona ACTIVAR para comenzar.")
+
+    # ──────────────────────────────────────────
+    # Navegación por páginas (ventana única)
+    # ──────────────────────────────────────────
+
+    def _nav_leave(self, widget, page, color):
+        try:
+            widget.config(bg=BG, fg=color if self._page == page else TEXT_DIM)
+        except Exception:
+            pass
+
+    def _update_nav_highlight(self):
+        try:
+            self.tb_cfg.config(fg=GOLD if self._page == "settings" else TEXT_DIM)
+        except Exception:
+            pass
+        try:
+            self.tb_stats.config(fg=CYAN if self._page == "stats" else TEXT_DIM)
+        except Exception:
+            pass
+        try:
+            self.tb_home.config(fg=WHITE if self._page == "home" else TEXT_DIM)
+        except Exception:
+            pass
+
+    def show_page(self, name):
+        """Cambia de página dentro de la misma ventana (estilo PWA)."""
+        if name not in ("home", "settings", "stats"):
+            return
+        try:
+            if name == "settings" and not self._settings_built:
+                self._build_settings_page()
+            if name == "stats" and not self._stats_built:
+                self._build_stats_page()
+            self._page = name
+            for _pg in self._pages.values():
+                _pg.pack_forget()
+            if name == "home":
+                self.page_overlay.place_forget()
+                self.tb_title.config(text="LoL Auto Queue")
+                self.root.update_idletasks()
+                if self._log_visible:
+                    self.root.geometry(f"390x{self._win_h_full or 560}")
+                else:
+                    self.root.geometry(f"390x{self.root.winfo_reqheight()}")
+            else:
+                self._pages[name].pack(fill="both", expand=True)
+                self.page_overlay.place(x=0, y=36, relwidth=1.0,
+                                        relheight=1.0, height=-36)
+                self.page_overlay.lift()
+                self.tb_title.config(
+                    text="Ajustes" if name == "settings" else "Estadísticas")
+                self.root.geometry(f"390x{self._page_heights[name]}")
+                self.root.update_idletasks()
+            self._update_nav_highlight()
+            if name == "stats":
+                self._select_period(self._stats_period)
+                if not self._stats_tick_on:
+                    self._stats_tick_on = True
+                    self._stats_tick()
+        except Exception:
+            pass
+
+    def _open_settings_page(self):
+        self._show_window()
+        self.show_page("settings")
 
     # ──────────────────────────────────────────
     # Menú de Configuración Separado
     # ──────────────────────────────────────────
 
-    def _open_settings(self, _=None):
-        if self._settings_win is not None and self._settings_win.winfo_exists():
-            self._settings_win.lift()
-            self._settings_win.focus_force()
+    def _build_settings_page(self):
+        """Construye la página de ajustes dentro de la ventana (una sola vez)."""
+        if self._settings_built:
             return
-
-        win = tk.Toplevel(self.root)
-        self._settings_win = win
-        win.title("Ajustes - LoL Auto Queue")
-        win.geometry("350x730")
-        win.resizable(False, False)
-        win.configure(bg=BG)
-        win.overrideredirect(True)
-        win.transient(self.root)
-
-        # Centrar sobre la ventana principal
-        self.root.update_idletasks()
-        rx = self.root.winfo_x()
-        ry = self.root.winfo_y()
-        rw = self.root.winfo_width()
-        rh = self.root.winfo_height()
-        x = rx + (rw - 350) // 2
-        y = ry + (rh - 730) // 2
-        win.geometry(f"350x730+{max(0, x)}+{max(0, y)}")
-
-        self._apply_frameless_style(win)
-
-        # Arrastre de la ventana de ajustes
-        drag = {"x": 0, "y": 0}
-
-        def _s_start_move(event):
-            drag["x"] = event.x_root - win.winfo_x()
-            drag["y"] = event.y_root - win.winfo_y()
-
-        def _s_on_move(event):
-            win.geometry(f"+{event.x_root - drag['x']}+{event.y_root - drag['y']}")
-
-        # ── Barra de título personalizada ──
-        s_titlebar = tk.Frame(win, bg=BG, height=36)
-        s_titlebar.pack(fill="x", side="top")
-        s_titlebar.pack_propagate(False)
-        s_titlebar.bind("<ButtonPress-1>", _s_start_move)
-        s_titlebar.bind("<B1-Motion>", _s_on_move)
-
-        s_tb_title = tk.Label(s_titlebar, text="Ajustes",
-                              font=("Cascadia Code", 9), fg=TEXT_DIM, bg=BG)
-        s_tb_title.pack(side="left", padx=12)
-        s_tb_title.bind("<ButtonPress-1>", _s_start_move)
-        s_tb_title.bind("<B1-Motion>", _s_on_move)
-
-        s_tb_close = tk.Label(s_titlebar, text="✕", font=("Segoe UI Symbol", 10, "bold"),
-                              fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
-        s_tb_close.pack(side="right", fill="y")
-        s_tb_close.bind("<Button-1>", lambda _: win.destroy())
-        s_tb_close.bind("<Enter>", lambda _: s_tb_close.config(bg=RED, fg=WHITE))
-        s_tb_close.bind("<Leave>", lambda _: s_tb_close.config(bg=BG, fg=TEXT_DIM))
-
-        # Icono si existe
-        ico_path = _bundled_path("app_icon.ico")
-        if os.path.exists(ico_path):
-            try:
-                win.iconbitmap(default=ico_path)
-            except Exception:
-                pass
+        self._settings_built = True
+        body = self._pages["settings"].inner
 
         # Encabezado de Ajustes
-        s_header = tk.Frame(win, bg=BG)
-        s_header.pack(fill="x", padx=20, pady=(6, 10))
+        s_header = tk.Frame(body, bg=BG)
+        s_header.pack(fill="x", padx=20, pady=(14, 10))
 
         tk.Label(s_header, text="⚙  AJUSTES", font=("Cascadia Code", 13, "bold"),
                  fg=GOLD, bg=BG).pack(side="left")
 
-        Divider(win).pack(fill="x", padx=20, pady=(0, 14))
+        Divider(body).pack(fill="x", padx=20, pady=(0, 14))
 
         # Tarjeta 1: Ajustes de detección (sliders)
-        cfg_card = tk.Frame(win, bg=CARD)
+        cfg_card = tk.Frame(body, bg=CARD)
         cfg_card.pack(fill="x", padx=20, pady=0)
 
         tk.Label(cfg_card, text="DETECCIÓN Y TIEMPOS",
@@ -567,7 +638,7 @@ class App:
                           fmt=lambda v: f"{int(v*100)}%")
 
         # Tarjeta 2: Comportamiento tras aceptar
-        beh_card = tk.Frame(win, bg=CARD)
+        beh_card = tk.Frame(body, bg=CARD)
         beh_card.pack(fill="x", padx=20, pady=(10, 0))
 
         tk.Label(beh_card, text="AL ACEPTAR PARTIDA",
@@ -588,7 +659,7 @@ class App:
         btn_keep.pack(side="right", fill="x", expand=True, padx=(4, 0))
 
         beh_desc = tk.Label(beh_card, text="", font=("Cascadia Code", 9),
-                            fg=TEXT_DIM, bg=CARD, wraplength=275, justify="left")
+                            fg=TEXT_DIM, bg=CARD, wraplength=300, justify="left")
         beh_desc.pack(anchor="w", padx=16, pady=(0, 12))
 
         def update_beh_ui():
@@ -618,7 +689,7 @@ class App:
         update_beh_ui()
 
         # Tarjeta 3: Calibración / template
-        tpl_card = tk.Frame(win, bg=CARD)
+        tpl_card = tk.Frame(body, bg=CARD)
         tpl_card.pack(fill="x", padx=20, pady=10)
 
         tk.Label(tpl_card, text="TEMPLATE DE RECONOCIMIENTO",
@@ -626,7 +697,7 @@ class App:
                  ).pack(anchor="w", padx=16, pady=(12, 4))
 
         tk.Label(tpl_card, text="Si cambias de resolución de pantalla, puedes volver a capturar el botón.",
-                 font=("Cascadia Code", 9), fg=TEXT_DIM, bg=CARD, wraplength=275, justify="left"
+                 font=("Cascadia Code", 9), fg=TEXT_DIM, bg=CARD, wraplength=300, justify="left"
                  ).pack(anchor="w", padx=16, pady=(0, 8))
 
         cal_btn = tk.Label(tpl_card,
@@ -634,12 +705,12 @@ class App:
                            font=("Cascadia Code", 10, "bold"), fg=CYAN, bg=BORDER,
                            cursor="hand2", pady=7, padx=10)
         cal_btn.pack(padx=16, pady=(0, 14), anchor="w")
-        cal_btn.bind("<Button-1>", lambda e: (win.destroy(), self._calibrate()))
+        cal_btn.bind("<Button-1>", lambda e: self._calibrate())
         cal_btn.bind("<Enter>", lambda _: cal_btn.config(bg="#2D333B", fg=WHITE))
         cal_btn.bind("<Leave>", lambda _: cal_btn.config(bg=BORDER, fg=CYAN))
 
         # Tarjeta 4: Comportamiento al cerrar la app
-        close_card = tk.Frame(win, bg=CARD)
+        close_card = tk.Frame(body, bg=CARD)
         close_card.pack(fill="x", padx=20, pady=(0, 10))
 
         tk.Label(close_card, text="AL CERRAR LA APP",
@@ -660,7 +731,7 @@ class App:
         btn_tray.pack(side="right", fill="x", expand=True, padx=(4, 0))
 
         close_desc = tk.Label(close_card, text="", font=("Cascadia Code", 9),
-                              fg=TEXT_DIM, bg=CARD, wraplength=275, justify="left")
+                              fg=TEXT_DIM, bg=CARD, wraplength=300, justify="left")
         close_desc.pack(anchor="w", padx=16, pady=(0, 12))
 
         def update_close_ui():
@@ -687,82 +758,27 @@ class App:
         btn_tray.bind("<Button-1>", select_tray)
         update_close_ui()
 
-        # La ventana recién creada (frameless + transient) puede abrirse
-        # detrás de la principal: traerla al frente ya en el primer clic.
-        win.update_idletasks()
-        win.deiconify()
-        win.lift()
-        win.focus_force()
-        win.after(10, lambda: (win.lift(), win.focus_force())
-                 if win.winfo_exists() else None)
-
     # ──────────────────────────────────────────
     # Ventana de Estadísticas
     # ──────────────────────────────────────────
 
-    def _open_stats(self, _=None):
-        if self._stats_win is not None and self._stats_win.winfo_exists():
-            self._stats_win.lift()
-            self._stats_win.focus_force()
+    def _build_stats_page(self):
+        """Construye la página de estadísticas dentro de la ventana (una sola vez)."""
+        if self._stats_built:
             return
-
-        win = tk.Toplevel(self.root)
-        self._stats_win = win
-        win.title("Estadísticas - LoL Auto Queue")
-        win.resizable(False, False)
-        win.configure(bg=BG)
-        win.overrideredirect(True)
-        win.transient(self.root)
-
-        W, H = 350, 645
-        self.root.update_idletasks()
-        rx, ry = self.root.winfo_x(), self.root.winfo_y()
-        rw, rh = self.root.winfo_width(), self.root.winfo_height()
-        x = rx + (rw - W) // 2
-        y = ry + (rh - H) // 2
-        win.geometry(f"{W}x{H}+{max(0, x)}+{max(0, y)}")
-
-        self._apply_frameless_style(win)
-
-        drag = {"x": 0, "y": 0}
-
-        def _s_start_move(event):
-            drag["x"] = event.x_root - win.winfo_x()
-            drag["y"] = event.y_root - win.winfo_y()
-
-        def _s_on_move(event):
-            win.geometry(f"+{event.x_root - drag['x']}+{event.y_root - drag['y']}")
-
-        # ── Barra de título personalizada ──
-        titlebar = tk.Frame(win, bg=BG, height=36)
-        titlebar.pack(fill="x", side="top")
-        titlebar.pack_propagate(False)
-        titlebar.bind("<ButtonPress-1>", _s_start_move)
-        titlebar.bind("<B1-Motion>", _s_on_move)
-
-        tb_title = tk.Label(titlebar, text="Estadísticas",
-                            font=("Cascadia Code", 9), fg=TEXT_DIM, bg=BG)
-        tb_title.pack(side="left", padx=12)
-        tb_title.bind("<ButtonPress-1>", _s_start_move)
-        tb_title.bind("<B1-Motion>", _s_on_move)
-
-        tb_close = tk.Label(titlebar, text="✕", font=("Segoe UI Symbol", 10, "bold"),
-                            fg=TEXT_DIM, bg=BG, cursor="hand2", width=4)
-        tb_close.pack(side="right", fill="y")
-        tb_close.bind("<Button-1>", lambda _: win.destroy())
-        tb_close.bind("<Enter>", lambda _: tb_close.config(bg=RED, fg=WHITE))
-        tb_close.bind("<Leave>", lambda _: tb_close.config(bg=BG, fg=TEXT_DIM))
+        self._stats_built = True
+        body = self._pages["stats"].inner
 
         # Encabezado
-        header = tk.Frame(win, bg=BG)
-        header.pack(fill="x", padx=20, pady=(6, 4))
+        header = tk.Frame(body, bg=BG)
+        header.pack(fill="x", padx=20, pady=(14, 4))
         tk.Label(header, text="📊  ESTADÍSTICAS", font=("Cascadia Code", 12, "bold"),
                  fg=GOLD, bg=BG).pack(side="left")
 
-        Divider(win).pack(fill="x", padx=20, pady=(6, 12))
+        Divider(body).pack(fill="x", padx=20, pady=(6, 12))
 
         # ── Selector de periodo ──
-        per_card = tk.Frame(win, bg=CARD)
+        per_card = tk.Frame(body, bg=CARD)
         per_card.pack(fill="x", padx=20, pady=0)
         tk.Label(per_card, text="PERIODO",
                  font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=CARD
@@ -808,7 +824,7 @@ class App:
             fg=BORDER if self._stats_at_present() else TEXT_DIM))
 
         # ── Tarjeta de valores ──
-        stats_card = tk.Frame(win, bg=CARD)
+        stats_card = tk.Frame(body, bg=CARD)
         stats_card.pack(fill="x", padx=20, pady=(10, 0))
 
         self._stats_values = {}
@@ -831,7 +847,7 @@ class App:
         tk.Frame(stats_card, bg=CARD, height=8).pack()
 
         # ── Restablecer ──
-        reset_btn = tk.Label(win, text="↺  Restablecer estadísticas",
+        reset_btn = tk.Label(body, text="↺  Restablecer estadísticas",
                              font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=BORDER,
                              cursor="hand2", pady=8)
         reset_btn.pack(fill="x", padx=20, pady=(10, 0))
@@ -841,11 +857,11 @@ class App:
             if not reset_state["confirm"]:
                 reset_state["confirm"] = True
                 reset_btn.config(text="¿Tocar de nuevo para confirmar?", fg=RED)
-                win.after(3000, lambda: (reset_state.update(confirm=False),
-                                         reset_btn.config(
-                                             text="↺  Restablecer estadísticas",
-                                             fg=TEXT_DIM))
-                          if win.winfo_exists() else None)
+                self.root.after(3000, lambda: (reset_state.update(confirm=False),
+                                               reset_btn.config(
+                                                   text="↺  Restablecer estadísticas",
+                                                   fg=TEXT_DIM))
+                                if self._page == "stats" else None)
                 return
             self._stats = {"activations": [], "matches": [], "sessions": [],
                              "first_seen": datetime.now().date().isoformat()}
@@ -860,16 +876,6 @@ class App:
                        if not reset_state["confirm"] else None)
         reset_btn.bind("<Leave>", lambda _: reset_btn.config(bg=BORDER, fg=TEXT_DIM)
                        if not reset_state["confirm"] else None)
-
-        win.update_idletasks()
-        win.deiconify()
-        win.lift()
-        win.focus_force()
-        win.after(10, lambda: (win.lift(), win.focus_force())
-                 if win.winfo_exists() else None)
-
-        self._select_period(self._stats_period)
-        self._stats_tick(win)
 
     def _select_period(self, period):
         self._stats_period = period
@@ -938,7 +944,7 @@ class App:
         self._refresh_stats_win()
 
     def _refresh_stats_win(self):
-        if self._stats_win is None or not self._stats_win.winfo_exists():
+        if self._page != "stats" or not self._stats_built:
             return
         try:
             data = self._stats_for(self._stats_period)
@@ -961,14 +967,19 @@ class App:
         except Exception:
             pass
 
-    def _stats_tick(self, win):
+    def _stats_tick(self):
+        if self._page != "stats":
+            self._stats_tick_on = False
+            return
         try:
-            if not win.winfo_exists():
+            if not self.root.winfo_exists():
+                self._stats_tick_on = False
                 return
         except Exception:
+            self._stats_tick_on = False
             return
         self._refresh_stats_win()
-        win.after(1000, lambda: self._stats_tick(win))
+        self.root.after(1000, self._stats_tick)
 
     def _make_slider(self, parent, label, var_name, lbl_name,
                      from_, to, resolution, default, fmt):
@@ -1023,7 +1034,7 @@ class App:
                 self.log_card.pack(fill="both", expand=True, padx=24, pady=(0, 20))
                 self.root.update_idletasks()
                 self.root.geometry(f"390x{self._win_h_full or 560}")
-                self.tb_log_btn.config(fg=GREEN)
+                self.log_toggle_btn.config(fg=GREEN)
             else:
                 cur = self.root.winfo_height()
                 if cur > 200:
@@ -1031,7 +1042,7 @@ class App:
                 self.log_card.pack_forget()
                 self.root.update_idletasks()
                 self.root.geometry(f"390x{self.root.winfo_reqheight()}")
-                self.tb_log_btn.config(fg=TEXT_DIM)
+                self.log_toggle_btn.config(fg=TEXT_DIM)
         except Exception:
             pass
         if save:
@@ -1138,7 +1149,7 @@ class App:
         """Lee config.json con valores validados; usa defaults si falta o es inválido."""
         cfg = {"delay": 0.5, "threshold": 0.80,
                "auto_deactivate": True, "close_to_tray": True,
-               "log_visible": True}
+               "log_visible": True, "pos": None}
         try:
             with open(self._config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -1148,6 +1159,10 @@ class App:
                 cfg["auto_deactivate"] = bool(data.get("auto_deactivate", cfg["auto_deactivate"]))
                 cfg["close_to_tray"] = bool(data.get("close_to_tray", cfg["close_to_tray"]))
                 cfg["log_visible"] = bool(data.get("log_visible", cfg["log_visible"]))
+                _pos = data.get("pos", None)
+                if (isinstance(_pos, (list, tuple)) and len(_pos) == 2
+                        and all(isinstance(v, (int, float)) for v in _pos)):
+                    cfg["pos"] = [int(_pos[0]), int(_pos[1])]
         except Exception:
             pass
         return cfg
@@ -1161,6 +1176,7 @@ class App:
                 "auto_deactivate": bool(self.auto_deactivate_var.get()),
                 "close_to_tray": bool(self.close_to_tray_var.get()),
                 "log_visible": bool(getattr(self, "_log_visible", True)),
+                "pos": list(getattr(self, "_win_pos", None) or []) or None,
             }
             with open(self._config_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
@@ -1346,7 +1362,44 @@ class App:
         else:
             self._quit_app()
 
+    def _restore_pos(self, pos):
+        """Restaura la posición guardada (limitada a la pantalla visible)."""
+        try:
+            if not (isinstance(pos, (list, tuple)) and len(pos) == 2):
+                return
+            x, y = int(pos[0]), int(pos[1])
+            sw = self.root.winfo_screenwidth()
+            sh = self.root.winfo_screenheight()
+            x = min(max(x, -50), max(0, sw - 100))
+            y = min(max(y, -50), max(0, sh - 100))
+            self.root.geometry(f"+{x}+{y}")
+            self._win_pos = [x, y]
+        except Exception:
+            pass
+
+    def _schedule_pos_save(self):
+        try:
+            if self._pos_job is not None:
+                self.root.after_cancel(self._pos_job)
+        except Exception:
+            pass
+        try:
+            self._pos_job = self.root.after(1000, self._save_pos_now)
+        except Exception:
+            pass
+
+    def _save_pos_now(self):
+        self._pos_job = None
+        try:
+            if not self.root.winfo_viewable():
+                return
+            self._win_pos = [self.root.winfo_x(), self.root.winfo_y()]
+        except Exception:
+            return
+        self._save_config()
+
     def _quit_app(self):
+        self._save_pos_now()
         try:
             if self.bot_active:
                 self.bot.stop()
@@ -1466,7 +1519,7 @@ class App:
                     lambda _: "Desactivar bot" if self.bot_active else "Activar bot",
                     lambda icon, _: self.root.after(0, self._toggle)),
                 TrayItem("Abrir configuraciones",
-                         lambda icon, _: self.root.after(0, self._open_settings)),
+                         lambda icon, _: self.root.after(0, self._open_settings_page)),
                 TrayItem("Cerrar", lambda icon, _: self.root.after(0, self._quit_app)),
             )
             self._tray_icon = pystray.Icon(
@@ -1494,11 +1547,6 @@ class App:
         self._refresh_tray_menu()
 
     def _hide_to_tray(self):
-        try:
-            if self._settings_win is not None and self._settings_win.winfo_exists():
-                self._settings_win.withdraw()
-        except Exception:
-            pass
         self.root.withdraw()
         self._window_visible = False
         self._refresh_tray_menu()
