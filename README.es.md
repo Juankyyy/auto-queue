@@ -25,20 +25,24 @@
 
 Detecta el botón **¡ACEPTAR!** por reconocimiento de imagen (OpenCV Template Matching, con respaldo por detección de color) y hace clic por ti con un pequeño retardo aleatorio para un comportamiento más natural.
 
-> 🚻 **Uso responsable:** está creada para ausencias cortas como ir al baño o a la cocina por algo de comer. No se recomienda para ausentarte mucho tiempo ni fomentamos abandonar las colas: si lo activas debes estar listo para jugar.
+> ### ⚠️ Uso responsable
+>
+> **Esta app solo está pensada para ausencias cortas** (ir al baño, ir a la cocina por algo de comer, etc.).
+>
+> **No la uses para ausentarte mucho tiempo ni para abandonar colas: si la activas debes estar listo para jugar** cuando empiece la partida.
 
 ## Características
 
 - ✅ **Auto-aceptación** del popup de partida encontrada.
-- 🎯 **Doble detección**: Template Matching (OpenCV) + respaldo por color cyan.
+- 🎯 **Detección triple-escala**: Template Matching en grises (0.85/1.0/1.18×) + respaldo por color cyan, con conciencia DPI.
 - ⏱️ **Delay configurable** (0.1 – 3.0 s) con variación aleatoria anti-detección.
 - 🎚️ **Umbral de detección ajustable** (50 – 99 %).
 - 🔒 **Auto-desactivación** tras aceptar, o modo continuo por si alguien cancela la cola.
 - 📸 **Calibración**: captura tu propio template si cambias de resolución.
-- 🖥️ **Ventana frameless** personalizada (sin bordes de Windows), arrastrable.
+- 🖥️ **Ventana única frameless** (sin bordes de Windows), arrastrable, con páginas de inicio/ajustes/estadísticas y soporte de teclado.
 - 🔔 **Bandeja del sistema**: icono con punto verde de estado, menú (activar/desactivar, configuraciones, cerrar) y clic para mostrar la ventana.
-- 📊 **Estadísticas** por día, semana, mes y año: partidas, activaciones, tiempo activo y promedios.
-- 💾 **Persistencia**: ajustes y estadísticas se guardan entre sesiones (`config.json`, `stats.json`).
+- 📊 **Estadísticas** por día, semana, mes y año con navegación por periodos: partidas, activaciones, tiempo activo y promedios.
+- 💾 **Persistencia**: ajustes, estadísticas y posición de la ventana se guardan entre sesiones (`config.json`, `stats.json`).
 - 📝 **Registro colapsable** de eventos en la ventana principal.
 - 🛡️ **Instancia única**: no se abre dos veces; reabrirla muestra la ventana existente.
 
@@ -56,12 +60,18 @@ O simplemente ejecuta:
 Iniciar Bot.bat
 ```
 
+Para generar el `.exe` portable (en `.venv` aislado):
+
+```bat
+build.bat
+```
+
 ## Uso
 
-1. Abre la app y pulsa **ACTIVAR BOT**.
+1. Abre la app y pulsa **ACTIVAR BOT** (clic o `Enter`/`Espacio` con el botón enfocado).
 2. Entra en cola en League of Legends.
 3. Cuando aparezca la partida, el bot la acepta solo. 🎮
-4. (Opcional) Abre **⚙ Ajustes** para calibrar el template con **📸 Capturar Nuevo Template** teniendo el popup visible (te da 3 segundos).
+4. (Opcional) Abre la **página de ajustes** para calibrar el template con **Capturar Nuevo Template** teniendo el popup visible (te da 3 segundos).
 
 > ⚠️ Úsalo bajo tu responsabilidad. La automatización de clientes de juego puede ir en contra de los términos de servicio de Riot Games.
 
@@ -109,6 +119,20 @@ auto-queue/
 - **PyAutoGUI + Pillow** — captura de pantalla y clic
 - **pystray** — icono de bandeja del sistema
 - **Font Awesome Free** — iconos de la interfaz ([CC BY 4.0](https://fontawesome.com/license/free))
+
+## Desarrollo
+
+```bat
+pip install -r requirements-dev.txt
+python -m ruff check .
+python -m pytest tests -q
+```
+
+El CI ejecuta lint + tests en cada push/PR a `main`/`dev`.
+
+## Licencia
+
+GPL-3.0 — ver [LICENSE](LICENSE).
 
 ---
 

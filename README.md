@@ -25,20 +25,24 @@
 
 It detects the **ACCEPT!** button through image recognition (OpenCV Template Matching, with color-detection fallback) and clicks it for you with a small random delay for more natural behavior.
 
-> 🚻 **Responsible use:** it is made for short absences such as going to the bathroom or grabbing something from the kitchen. Going AFK for a long time is not recommended, and we do not encourage abandoning queues: if you enable it, you must be ready to play.
+> ### ⚠️ Responsible use
+>
+> **This app is only meant for short absences** (bathroom, grabbing something from the kitchen, etc.).
+>
+> **Do not use it to stay AFK for long periods or to abandon queues: if you enable it, you must be ready to play** when the match starts.
 
 ## Features
 
 - ✅ **Auto-accept** of the match-found popup.
-- 🎯 **Dual detection**: Template Matching (OpenCV) + cyan-color fallback.
+- 🎯 **Triple-scale detection**: grayscale Template Matching (0.85/1.0/1.18×) + cyan-color fallback, DPI-aware.
 - ⏱️ **Configurable delay** (0.1 – 3.0 s) with random anti-detection variation.
 - 🎚️ **Adjustable detection threshold** (50 – 99%).
 - 🔒 **Auto-disable** after accepting, or continuous mode in case someone cancels the queue.
 - 📸 **Calibration**: capture your own template if you change resolution.
-- 🖥️ Custom **frameless window** (no Windows borders), draggable.
+- 🖥️ Custom **frameless single window** (no Windows borders), draggable, with home/settings/stats pages and keyboard support.
 - 🔔 **System tray**: status icon with green active dot, menu (enable/disable, settings, quit) and click to show the window.
-- 📊 **Statistics** by day, week, month and year: matches, activations, active time and averages.
-- 💾 **Persistence**: settings and stats are saved between sessions (`config.json`, `stats.json`).
+- 📊 **Statistics** by day, week, month and year with period browser: matches, activations, active time and averages.
+- 💾 **Persistence**: settings, stats and window position are saved between sessions (`config.json`, `stats.json`).
 - 📝 **Collapsible event log** in the main window.
 - 🛡️ **Single instance**: it never opens twice; reopening it shows the existing window.
 
@@ -56,12 +60,18 @@ Or simply run:
 Iniciar Bot.bat
 ```
 
+To build the standalone `.exe` (isolated `.venv`):
+
+```bat
+build.bat
+```
+
 ## Usage
 
-1. Open the app and press **ACTIVAR BOT**.
+1. Open the app and press **ACTIVAR BOT** (click or `Enter`/`Space` with the button focused).
 2. Queue up in League of Legends.
 3. When the match pops, the bot accepts it for you. 🎮
-4. (Optional) Open **⚙ settings** to calibrate the template with **📸 Capturar Nuevo Template** while the popup is visible (it gives you 3 seconds).
+4. (Optional) Open the **settings page** to calibrate the template with **Capturar Nuevo Template** while the popup is visible (it gives you 3 seconds).
 
 > ⚠️ Use at your own risk. Automating game clients may go against Riot Games' Terms of Service.
 
@@ -109,6 +119,20 @@ auto-queue/
 - **PyAutoGUI + Pillow** — screenshots and clicking
 - **pystray** — system tray icon
 - **Font Awesome Free** — interface icons ([CC BY 4.0](https://fontawesome.com/license/free))
+
+## Development
+
+```bat
+pip install -r requirements-dev.txt
+python -m ruff check .
+python -m pytest tests -q
+```
+
+CI runs lint + tests on every push/PR to `main`/`dev`.
+
+## License
+
+GPL-3.0 — see [LICENSE](LICENSE).
 
 ---
 
