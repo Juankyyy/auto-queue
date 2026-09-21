@@ -10,6 +10,7 @@ import math
 import os
 import sys
 import json
+import calendar
 import ctypes
 from datetime import datetime, timedelta
 from PIL import Image, ImageDraw, ImageTk
@@ -314,9 +315,13 @@ class App:
         # Estadísticas de uso (persistentes en stats.json)
         self._stats_path = os.path.join(self.base_dir, "stats.json")
         self._stats = self._load_stats()
+        if not self._stats.get("first_seen"):
+            self._stats["first_seen"] = datetime.now().date().isoformat()
+            self._save_stats()
         self._session_start = None
         self._stats_win = None
         self._stats_period = "day"
+        self._stats_ref = datetime.now()
         # Variantes del icono según estado (normal / activo con punto verde)
         self._tray_img_off = None
         self._tray_img_on = None
@@ -709,7 +714,7 @@ class App:
         win.overrideredirect(True)
         win.transient(self.root)
 
-        W, H = 350, 600
+        W, H = 350, 645
         self.root.update_idletasks()
         rx, ry = self.root.winfo_x(), self.root.winfo_y()
         rw, rh = self.root.winfo_width(), self.root.winfo_height()
@@ -753,9 +758,6 @@ class App:
         header.pack(fill="x", padx=20, pady=(6, 4))
         tk.Label(header, text="📊  ESTADÍSTICAS", font=("Cascadia Code", 12, "bold"),
                  fg=GOLD, bg=BG).pack(side="left")
-        self._stats_period_lbl = tk.Label(header, text="", font=("Cascadia Code", 9),
-                                          fg=TEXT_DIM, bg=BG)
-        self._stats_period_lbl.pack(side="right")
 
         Divider(win).pack(fill="x", padx=20, pady=(6, 12))
 
@@ -767,7 +769,7 @@ class App:
                  ).pack(anchor="w", padx=16, pady=(12, 8))
 
         per_row = tk.Frame(per_card, bg=CARD)
-        per_row.pack(fill="x", padx=16, pady=(0, 12))
+        per_row.pack(fill="x", padx=16, pady=(0, 8))
 
         self._period_btns = {}
         for key, txt in (("day", "Día"), ("week", "Semana"),
@@ -778,6 +780,32 @@ class App:
                      padx=(0, 4) if key != "year" else (0, 0))
             btn.bind("<Button-1>", lambda _, k=key: self._select_period(k))
             self._period_btns[key] = btn
+
+        # ── Navegación por periodo ──
+        nav_row = tk.Frame(per_card, bg=CARD)
+        nav_row.pack(fill="x", padx=16, pady=(0, 12))
+
+        self._stats_prev = tk.Label(nav_row, text="◀", font=("Cascadia Code", 10, "bold"),
+                                    fg=TEXT_DIM, bg=CARD, cursor="hand2", width=3)
+        self._stats_prev.pack(side="left")
+        self._stats_prev.bind("<Button-1>", lambda _: self._stats_step(-1))
+        self._stats_prev.bind("<Enter>", lambda _: self._stats_prev.config(fg=WHITE)
+                              if not self._stats_at_first() else None)
+        self._stats_prev.bind("<Leave>", lambda _: self._stats_prev.config(
+            fg=BORDER if self._stats_at_first() else TEXT_DIM))
+
+        self._stats_period_lbl = tk.Label(nav_row, text="", font=("Cascadia Code", 9, "bold"),
+                                          fg=CYAN, bg=CARD)
+        self._stats_period_lbl.pack(side="left", fill="x", expand=True)
+
+        self._stats_next = tk.Label(nav_row, text="▶", font=("Cascadia Code", 10, "bold"),
+                                    fg=TEXT_DIM, bg=CARD, cursor="hand2", width=3)
+        self._stats_next.pack(side="right")
+        self._stats_next.bind("<Button-1>", lambda _: self._stats_step(1))
+        self._stats_next.bind("<Enter>", lambda _: self._stats_next.config(fg=WHITE)
+                              if not self._stats_at_present() else None)
+        self._stats_next.bind("<Leave>", lambda _: self._stats_next.config(
+            fg=BORDER if self._stats_at_present() else TEXT_DIM))
 
         # ── Tarjeta de valores ──
         stats_card = tk.Frame(win, bg=CARD)
@@ -819,7 +847,8 @@ class App:
                                              fg=TEXT_DIM))
                           if win.winfo_exists() else None)
                 return
-            self._stats = {"activations": [], "matches": [], "sessions": []}
+            self._stats = {"activations": [], "matches": [], "sessions": [],
+                             "first_seen": datetime.now().date().isoformat()}
             self._save_stats()
             reset_state["confirm"] = False
             reset_btn.config(text="↺  Restablecer estadísticas", fg=TEXT_DIM)
@@ -844,11 +873,68 @@ class App:
 
     def _select_period(self, period):
         self._stats_period = period
+        self._stats_ref = datetime.now()
         for key, btn in getattr(self, "_period_btns", {}).items():
             if key == period:
                 btn.config(bg="#152636", fg=CYAN)
             else:
                 btn.config(bg=BORDER, fg=TEXT_DIM)
+        self._refresh_stats_win()
+
+    @staticmethod
+    def _add_months(ref, n):
+        """Suma n meses a una fecha sin desbordar el día (ej. 31 ene → 28 feb)."""
+        m = ref.month - 1 + n
+        y, m = ref.year + m // 12, m % 12 + 1
+        d = min(ref.day, calendar.monthrange(y, m)[1])
+        return ref.replace(year=y, month=m, day=d)
+
+    def _first_day(self):
+        """Fecha del primer uso de la app (límite inferior de navegación)."""
+        try:
+            return datetime.fromisoformat(self._stats.get("first_seen", "")).date()
+        except Exception:
+            return datetime.now().date()
+
+    def _stats_at_present(self):
+        """True si el periodo visible ya es el actual (no se puede avanzar)."""
+        try:
+            p, ref = self._stats_period, self._stats_ref
+            now = datetime.now()
+            return self._period_bounds(p, ref)[0] >= self._period_bounds(p, now)[0]
+        except Exception:
+            return True
+
+    def _stats_at_first(self):
+        """True si el periodo visible ya es el del primer uso (no se puede retroceder)."""
+        try:
+            p, ref = self._stats_period, self._stats_ref
+            first = datetime.combine(self._first_day(), datetime.min.time())
+            return self._period_bounds(p, ref)[0] <= self._period_bounds(p, first)[0]
+        except Exception:
+            return True
+
+    def _stats_step(self, delta):
+        """Avanza/retrocede el periodo visible entre primer uso y presente."""
+        try:
+            p, ref = self._stats_period, self._stats_ref
+            if p == "day":
+                cand = ref + timedelta(days=delta)
+            elif p == "week":
+                cand = ref + timedelta(weeks=delta)
+            elif p == "month":
+                cand = self._add_months(ref, delta)
+            else:
+                cand = self._add_months(ref, 12 * delta)
+            now = datetime.now()
+            if self._period_bounds(p, cand)[0] > self._period_bounds(p, now)[0]:
+                return
+            first = datetime.combine(self._first_day(), datetime.min.time())
+            if self._period_bounds(p, cand)[1] <= first:
+                return
+            self._stats_ref = cand
+        except Exception:
+            pass
         self._refresh_stats_win()
 
     def _refresh_stats_win(self):
@@ -857,6 +943,13 @@ class App:
         try:
             data = self._stats_for(self._stats_period)
             self._stats_period_lbl.config(text=data["label"])
+            try:
+                self._stats_next.config(
+                    fg=BORDER if self._stats_at_present() else TEXT_DIM)
+                self._stats_prev.config(
+                    fg=BORDER if self._stats_at_first() else TEXT_DIM)
+            except Exception:
+                pass
             vals = self._stats_values
             vals["matches"].config(text=str(data["matches"]))
             vals["activations"].config(text=str(data["activations"]))
@@ -1083,15 +1176,21 @@ class App:
 
     def _load_stats(self):
         """Lee stats.json; estructura válida o vacía si falta/es inválido."""
-        stats = {"activations": [], "matches": [], "sessions": []}
+        stats = {"activations": [], "matches": [], "sessions": [],
+                 "first_seen": None}
         try:
             with open(self._stats_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict):
-                for key in stats:
+                for key in ("activations", "matches", "sessions"):
                     val = data.get(key, [])
                     if isinstance(val, list):
                         stats[key] = val
+                try:
+                    datetime.fromisoformat(data.get("first_seen", ""))
+                    stats["first_seen"] = data["first_seen"]
+                except Exception:
+                    pass
         except Exception:
             pass
         return stats
@@ -1152,8 +1251,8 @@ class App:
         return start, end, label
 
     def _stats_for(self, period):
-        """Agrega eventos del periodo: partidas, activaciones y tiempo activo."""
-        start, end, label = self._period_bounds(period)
+        """Agrega eventos del periodo visible: partidas, activaciones y tiempo activo."""
+        start, end, label = self._period_bounds(period, self._stats_ref)
         matches = sum(1 for ts in self._stats["matches"]
                       if (dt := self._parse_ts(ts)) is not None and start <= dt < end)
         activations = sum(1 for ts in self._stats["activations"]
