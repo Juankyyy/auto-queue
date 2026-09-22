@@ -82,6 +82,7 @@ Los ajustes se guardan automáticamente en `config.json`:
 | `auto_deactivate` | Apagarse tras aceptar una partida        | `true`  |
 | `close_to_tray`   | La ✕ minimiza a bandeja en vez de salir  | `true`  |
 | `log_visible`     | Mostrar el registro al arrancar          | `true`  |
+| `lang`            | Idioma de la interfaz (`en`/`es`, reinicia) | `"en"` |
 | `pos`             | Última posición `[x, y]` (se guarda sola)| `null`  |
 
 ## Estructura del proyecto

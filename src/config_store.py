@@ -14,6 +14,7 @@ CONFIG_DEFAULTS: dict[str, Any] = {
     "close_to_tray": True,
     "log_visible": True,
     "pos": None,
+    "lang": "en",
 }
 
 DELAY_MIN, DELAY_MAX = 0.1, 3.0
@@ -36,6 +37,8 @@ def load_config(path: str) -> dict[str, Any]:
             cfg["close_to_tray"] = bool(data.get("close_to_tray",
                                           cfg["close_to_tray"]))
             cfg["log_visible"] = bool(data.get("log_visible", cfg["log_visible"]))
+            lang = str(data.get("lang", cfg["lang"])).lower()
+            cfg["lang"] = lang if lang in ("en", "es") else "en"
             _pos = data.get("pos", None)
             if (isinstance(_pos, (list, tuple)) and len(_pos) == 2
                     and all(isinstance(v, (int, float)) for v in _pos)):
@@ -47,14 +50,16 @@ def load_config(path: str) -> dict[str, Any]:
 
 def save_config(path: str, *, delay: float, threshold: float,
                 auto_deactivate: bool, close_to_tray: bool,
-                log_visible: bool, pos=None) -> None:
+                log_visible: bool, pos=None, lang: str = "en") -> None:
     """Guarda los ajustes actuales en config.json (escritura atómica)."""
+    lang = str(lang or "en").lower()
     data = {
         "delay": round(float(delay), 2),
         "threshold": round(float(threshold), 2),
         "auto_deactivate": bool(auto_deactivate),
         "close_to_tray": bool(close_to_tray),
         "log_visible": bool(log_visible),
+        "lang": lang if lang in ("en", "es") else "en",
         "pos": ([int(pos[0]), int(pos[1])] if (
             isinstance(pos, (list, tuple)) and len(pos) == 2
             and all(isinstance(v, (int, float)) for v in pos))

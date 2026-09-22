@@ -82,6 +82,7 @@ Settings are saved automatically to `config.json`:
 | `auto_deactivate` | Turn off after accepting a match           | `true`  |
 | `close_to_tray`   | ✕ minimizes to tray instead of quitting    | `true`  |
 | `log_visible`     | Show the event log on startup              | `true`  |
+| `lang`            | Interface language (`en`/`es`, restarts)   | `"en"`  |
 | `pos`             | Last window position `[x, y]` (auto-saved) | `null`  |
 
 ## Project structure

@@ -18,6 +18,7 @@ from PIL import Image, ImageTk
 import icons
 from bot import LoLAutoAccept
 from config_store import load_config, save_config
+from i18n import get_language, set_language, t
 from paths import bundled_path, migrate_user_file, user_data_dir
 from stats_store import MAX_STATS_EVENTS, StatsStore
 from tray import SystemTray
@@ -143,7 +144,7 @@ class AnimatedDot(tk.Canvas):
 class GlowButton(tk.Canvas):
     """Botón grande con efecto glow personalizable."""
 
-    def __init__(self, parent, text_on="ACTIVAR BOT", text_off="DETENER BOT",
+    def __init__(self, parent, text_on="START BOT", text_off="STOP BOT",
                  command=None, **kwargs):
         super().__init__(parent, width=230, height=58,
                          bg=BG, highlightthickness=0, cursor="hand2",
@@ -375,14 +376,21 @@ class Divider(tk.Frame):
 
 
 class ScrollHost(tk.Frame):
-    """Contenedor con scroll por rueda (sin barra visible).
+    """Página con scroll vertical: rueda del mouse + pastilla moderna flotante.
 
-    El binding global de rueda se comparte entre páginas con un
-    propietario: solo la página bajo el cursor responde y ninguna
-    deja bindings colgados al salir.
+    Una sola rueda global (bind_all una vez) se enruta al ScrollHost que
+    está bajo el cursor. La barra es un canvas flotante (no ocupa espacio)
+    con un thumb redondeado, visible solo si el contenido desborda; los
+    items del thumb son persistentes (se mueven y tiñen, nunca se borran
+    en caliente) y mostrarla se difiere para no parpadear en transiciones.
     """
 
-    _wheel_owner = None
+    _instances = []
+    _wheel_bound = False
+
+    BAR_W = 12
+    THUMB_W = 6
+    THUMB_MIN = 28
 
     def __init__(self, parent, **kwargs):
         super().__init__(parent, bg=BG, **kwargs)
@@ -390,35 +398,232 @@ class ScrollHost(tk.Frame):
         self.inner = tk.Frame(self.canvas, bg=BG)
         self._win = self.canvas.create_window((0, 0), window=self.inner,
                                               anchor="nw")
+        self.bar = tk.Canvas(self, width=self.BAR_W, bg=BG,
+                             highlightthickness=0, bd=0)
         self.canvas.pack(side="left", fill="both", expand=True)
-        self.inner.bind("<Configure>",
-                        lambda _: self.canvas.configure(
-                            scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>",
-                         lambda e: self.canvas.itemconfig(self._win,
-                                                          width=e.width))
-        self.inner.bind("<Enter>", lambda _: self._bind_wheel())
-        self.inner.bind("<Leave>", lambda _: self._unbind_wheel())
+        self.canvas.configure(yscrollcommand=self._on_scroll)
+        self.inner.bind("<Configure>", lambda _: self._after_layout())
+        self.canvas.bind("<Configure>", self._on_canvas_resize)
+        self.bar.bind("<Button-1>", self._track_click)
+        x0 = (self.BAR_W - self.THUMB_W) / 2
+        x1 = x0 + self.THUMB_W
+        self._thumb_items = (
+            self.bar.create_rectangle(x0, -10, x1, -10, fill="#2D333B",
+                                      outline="", tags="sthumb"),
+            self.bar.create_oval(x0, -10, x1, -10, fill="#2D333B",
+                                 outline="", tags="sthumb"),
+            self.bar.create_oval(x0, -10, x1, -10, fill="#2D333B",
+                                 outline="", tags="sthumb"),
+        )
+        self.bar.tag_bind("sthumb", "<Enter>", lambda _: self._set_hover(True))
+        self.bar.tag_bind("sthumb", "<Leave>", lambda _: self._set_hover(False))
+        self.bar.tag_bind("sthumb", "<Button-1>", self._drag_start)
+        self.bar.tag_bind("sthumb", "<B1-Motion>", self._drag_move)
+        self.bar.tag_bind("sthumb", "<ButtonRelease-1>", self._drag_end)
+        self.bar.bind("<ButtonRelease-1>", self._drag_end)
+        self._frac = (0.0, 1.0)
+        self._hover = False
+        self._drag_root = None
+        self._drag_first = 0.0
+        self._bar_placed = False
+        self._show_job = None
+        self._squelch_until = 0.0
+        ScrollHost._instances.append(self)
+        self.bind("<Destroy>", self._on_destroy)
+        ScrollHost._ensure_wheel(self.canvas)
 
-    def _bind_wheel(self):
-        ScrollHost._wheel_owner = self
-        self.canvas.bind_all("<MouseWheel>", self._wheel)
+    # ── Layout ──
 
-    def _unbind_wheel(self):
-        if ScrollHost._wheel_owner is self:
-            ScrollHost._wheel_owner = None
-            try:
-                self.canvas.unbind_all("<MouseWheel>")
-            except Exception:
-                pass
-
-    def _wheel(self, event):
-        if ScrollHost._wheel_owner is not self:
-            return
+    def _after_layout(self):
         try:
-            self.canvas.yview_scroll(-1 * (event.delta // 120), "units")
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         except Exception:
             pass
+
+    def _on_canvas_resize(self, event):
+        try:
+            self.canvas.itemconfig(self._win, width=event.width)
+        except Exception:
+            pass
+
+    def _on_destroy(self, event):
+        if event.widget is not self:
+            return
+        self._cancel_show()
+        try:
+            if self in ScrollHost._instances:
+                ScrollHost._instances.remove(self)
+        except Exception:
+            pass
+
+    # ── Visibilidad (mostrar diferido, ocultar inmediato) ──
+
+    def _on_scroll(self, first, last):
+        try:
+            first, last = float(first), float(last)
+        except Exception:
+            return
+        self._frac = (first, last)
+        if first <= 0.0 and last >= 1.0:
+            self._cancel_show()
+            self._set_bar_visible(False)
+        else:
+            if self._bar_placed:
+                self._position_thumb()
+            else:
+                self._schedule_show()
+
+    SHOW_DELAY_MS = 350
+
+    def squelch(self, ms=600):
+        """Silencia la aparición de la barra por `ms` (transiciones de página)."""
+        try:
+            self._squelch_until = time.monotonic() + ms / 1000.0
+        except Exception:
+            pass
+
+    def _schedule_show(self):
+        if self._bar_placed or self._show_job is not None:
+            return
+        try:
+            delay = int(self.SHOW_DELAY_MS)
+            try:
+                remaining = (self._squelch_until - time.monotonic()) * 1000.0
+                if remaining > 0:
+                    delay = int(max(delay, remaining))
+            except Exception:
+                pass
+            self._show_job = self.after(delay, self._show_now)
+        except Exception:
+            pass
+
+    def _show_now(self):
+        self._show_job = None
+        try:
+            first, last = self.canvas.yview()
+        except Exception:
+            return
+        if first <= 0.0 and last >= 1.0:
+            return
+        self._set_bar_visible(True)
+        self._position_thumb()
+
+    # ── Thumb (items persistentes: se mueven y tiñen, nunca se borran) ──
+
+    def _thumb_color(self):
+        if self._hover or self._drag_root is not None:
+            return GOLD
+        return "#2D333B"
+
+    def _position_thumb(self):
+        try:
+            h = self.canvas.winfo_height()
+            if h <= 1:
+                return
+            first, last = self._frac
+            th = max(float(self.THUMB_MIN), (last - first) * h)
+            y0 = max(0.0, min(first * h, h - th))
+            y1 = min(float(h), y0 + th)
+            x0 = (self.BAR_W - self.THUMB_W) / 2
+            x1 = x0 + self.THUMB_W
+            r = self.THUMB_W / 2
+            color = self._thumb_color()
+            self.bar.coords(self._thumb_items[0], x0, y0 + r, x1, y1 - r)
+            self.bar.coords(self._thumb_items[1], x0, y0, x1, y0 + 2 * r)
+            self.bar.coords(self._thumb_items[2], x0, y1 - 2 * r, x1, y1)
+            for _item in self._thumb_items:
+                self.bar.itemconfig(_item, fill=color)
+        except Exception:
+            pass
+
+    def _set_hover(self, on):
+        self._hover = on
+        self._position_thumb()
+
+    def _drag_start(self, event):
+        self._drag_root = event.y_root
+        self._drag_first = self._frac[0]
+        self._position_thumb()
+        return "break"
+
+    def _drag_move(self, event):
+        if self._drag_root is None:
+            return "break"
+        try:
+            h = self.canvas.winfo_height()
+            if h <= 1:
+                return "break"
+            target = self._drag_first + (event.y_root - self._drag_root) / h
+            self.canvas.yview_moveto(max(0.0, min(1.0, target)))
+        except Exception:
+            pass
+        return "break"
+
+    def _drag_end(self, event):
+        self._drag_root = None
+        self._position_thumb()
+        return "break"
+
+    def _track_click(self, event):
+        try:
+            y0 = self._frac[0] * self.canvas.winfo_height()
+            self.canvas.yview_scroll(-1 if event.y < y0 else 1, "pages")
+        except Exception:
+            pass
+
+    def _cancel_show(self):
+        if self._show_job is not None:
+            try:
+                self.after_cancel(self._show_job)
+            except Exception:
+                pass
+            self._show_job = None
+
+    def _set_bar_visible(self, vis):
+        if vis == self._bar_placed:
+            return
+        self._bar_placed = vis
+        try:
+            if vis:
+                self.bar.place(relx=1.0, rely=0.0, width=self.BAR_W,
+                               relheight=1.0, anchor="ne")
+            else:
+                self.bar.place_forget()
+        except Exception:
+            pass
+
+    # ── Rueda global ──
+
+    @classmethod
+    def _ensure_wheel(cls, widget):
+        if cls._wheel_bound:
+            return
+        cls._wheel_bound = True
+        try:
+            widget.bind_all("<MouseWheel>", cls._route_wheel)
+        except Exception:
+            cls._wheel_bound = False
+
+    @classmethod
+    def _route_wheel(cls, event):
+        try:
+            w = event.widget.winfo_containing(event.x_root, event.y_root)
+        except Exception:
+            return
+        if w is None:
+            return
+        for inst in list(cls._instances):
+            try:
+                if not inst.winfo_ismapped():
+                    continue
+                if str(w).startswith(str(inst.canvas)):
+                    steps = -1 * (event.delta // 120)
+                    if steps == 0:
+                        steps = -1 if event.delta > 0 else 1
+                    inst.canvas.yview_scroll(steps, "units")
+                    return "break"
+            except Exception:
+                continue
 
 
 class App:
@@ -468,6 +673,7 @@ class App:
 
         # Estado y variables de configuración (persistentes en config.json)
         saved = self._load_config()
+        set_language(saved.get("lang", "en"))
         self.bot_active = False
         self.bot_thread = None
         self._save_cfg_job = None
@@ -587,7 +793,7 @@ class App:
         self.dot = AnimatedDot(left, size=22)
         self.dot.pack(side="left")
 
-        self.status_lbl = tk.Label(left, text="INACTIVO",
+        self.status_lbl = tk.Label(left, text=t("status_idle"),
                                    font=("Cascadia Code", 11, "bold"),
                                    fg=RED, bg=CARD)
         self.status_lbl.pack(side="left", padx=(8, 0))
@@ -602,7 +808,9 @@ class App:
         btn_frame = tk.Frame(root, bg=BG)
         btn_frame.pack(pady=(16, 20))
 
-        self.toggle_btn = GlowButton(btn_frame, command=self._toggle)
+        self.toggle_btn = GlowButton(btn_frame, text_on=t("start_bot"),
+                                     text_off=t("stop_bot"),
+                                     command=self._toggle)
         self.toggle_btn.pack()
 
         # ── Pie con versión ────────────────────────
@@ -617,7 +825,7 @@ class App:
         log_card = self.log_card
         log_card.pack(fill="both", expand=True, padx=24, pady=(0, 20))
 
-        tk.Label(log_card, text="REGISTRO",
+        tk.Label(log_card, text=t("log_title"),
                  font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=CARD
                  ).pack(anchor="w", padx=14, pady=(10, 4))
 
@@ -643,7 +851,7 @@ class App:
             self._pages[_name] = _scroll
 
         self._update_nav_highlight()
-        self._log("Sistema iniciado. Presiona ACTIVAR para comenzar.")
+        self._log(t("boot_msg"))
 
     # ──────────────────────────────────────────
     # Navegación por páginas (ventana única)
@@ -694,8 +902,13 @@ class App:
                 self.page_overlay.place(x=0, y=36, relwidth=1.0,
                                         relheight=1.0, height=-36)
                 self.page_overlay.lift()
+                try:
+                    self._pages[name]._set_bar_visible(False)
+                    self._pages[name].squelch(600)
+                except Exception:
+                    pass
                 self.tb_title.config(
-                    text="Ajustes" if name == "settings" else "Estadísticas")
+                    text=t("page_settings") if name == "settings" else t("page_stats"))
                 self.root.geometry(f"390x{self._page_heights[name]}")
                 self.root.update_idletasks()
             self._update_nav_highlight()
@@ -726,7 +939,7 @@ class App:
         s_header = tk.Frame(body, bg=BG)
         s_header.pack(fill="x", padx=20, pady=(14, 4))
 
-        tk.Label(s_header, text="AJUSTES", font=("Cascadia Code", 13, "bold"),
+        tk.Label(s_header, text=t("settings_title"), font=("Cascadia Code", 13, "bold"),
                  fg=GOLD, bg=BG).pack(side="left")
 
         Divider(body).pack(fill="x", padx=20, pady=(0, 14))
@@ -735,17 +948,17 @@ class App:
         cfg_card = tk.Frame(body, bg=CARD)
         cfg_card.pack(fill="x", padx=20, pady=0)
 
-        tk.Label(cfg_card, text="DETECCIÓN Y TIEMPOS",
+        tk.Label(cfg_card, text=t("det_times"),
                  font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=CARD
                  ).pack(anchor="w", padx=16, pady=(12, 8))
 
         # Slider Delay
-        self._make_slider(cfg_card, "Delay al aceptar", "delay_val", "delay_lbl",
+        self._make_slider(cfg_card, t("delay_label"), "delay_val", "delay_lbl",
                           from_=0.1, to=3.0, resolution=0.1, default=0.5,
                           fmt=lambda v: f"{v:.1f}s")
 
         # Slider Umbral
-        self._make_slider(cfg_card, "Umbral de detección", "thresh_val", "thresh_lbl",
+        self._make_slider(cfg_card, t("threshold_label"), "thresh_val", "thresh_lbl",
                           from_=0.50, to=0.99, resolution=0.01, default=0.80,
                           fmt=lambda v: f"{int(v*100)}%")
 
@@ -753,19 +966,19 @@ class App:
         beh_card = tk.Frame(body, bg=CARD)
         beh_card.pack(fill="x", padx=20, pady=(10, 0))
 
-        tk.Label(beh_card, text="AL ACEPTAR PARTIDA",
+        tk.Label(beh_card, text=t("on_accept"),
                  font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=CARD
                  ).pack(anchor="w", padx=16, pady=(12, 8))
 
         beh_btns_frame = tk.Frame(beh_card, bg=CARD)
         beh_btns_frame.pack(fill="x", padx=16, pady=(0, 8))
 
-        btn_deact = tk.Label(beh_btns_frame, text="🔒 Desactivar",
+        btn_deact = tk.Label(beh_btns_frame, text=t("disable_bot"),
                              font=("Cascadia Code", 10, "bold"), cursor="hand2",
                              pady=7, padx=8)
         btn_deact.pack(side="left", fill="x", expand=True, padx=(0, 4))
 
-        btn_keep = tk.Label(beh_btns_frame, text="🔄 Mantener activo",
+        btn_keep = tk.Label(beh_btns_frame, text=t("keep_active"),
                             font=("Cascadia Code", 10, "bold"), cursor="hand2",
                             pady=7, padx=8)
         btn_keep.pack(side="right", fill="x", expand=True, padx=(4, 0))
@@ -778,11 +991,11 @@ class App:
             if self.auto_deactivate_var.get():
                 btn_deact.config(bg="#152636", fg=CYAN)
                 btn_keep.config(bg=BORDER, fg=TEXT_DIM)
-                beh_desc.config(text="El bot se apaga al aceptar. Deberás volver a activarlo para la siguiente cola.")
+                beh_desc.config(text=t("beh_disable_desc"))
             else:
                 btn_deact.config(bg=BORDER, fg=TEXT_DIM)
                 btn_keep.config(bg="#2E2410", fg=GOLD)
-                beh_desc.config(text="El bot sigue buscando por si alguien cancela o rechaza la partida actual.")
+                beh_desc.config(text=t("beh_keep_desc"))
 
         def select_deact(_=None):
             self.auto_deactivate_var.set(True)
@@ -804,16 +1017,16 @@ class App:
         tpl_card = tk.Frame(body, bg=CARD)
         tpl_card.pack(fill="x", padx=20, pady=10)
 
-        tk.Label(tpl_card, text="TEMPLATE DE RECONOCIMIENTO",
+        tk.Label(tpl_card, text=t("tpl_title"),
                  font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=CARD
                  ).pack(anchor="w", padx=16, pady=(12, 4))
 
-        tk.Label(tpl_card, text="Si cambias de resolución de pantalla, puedes volver a capturar el botón.",
+        tk.Label(tpl_card, text=t("tpl_desc"),
                  font=("Cascadia Code", 9), fg=TEXT_DIM, bg=CARD, wraplength=300, justify="left"
                  ).pack(anchor="w", padx=16, pady=(0, 8))
 
         cal_btn = tk.Label(tpl_card,
-                           text="  📸  Capturar Nuevo Template  ",
+                           text=t("capture_btn"),
                            font=("Cascadia Code", 10, "bold"), fg=CYAN, bg=BORDER,
                            cursor="hand2", pady=7, padx=10)
         cal_btn.pack(padx=16, pady=(0, 14), anchor="w")
@@ -825,19 +1038,19 @@ class App:
         close_card = tk.Frame(body, bg=CARD)
         close_card.pack(fill="x", padx=20, pady=(0, 10))
 
-        tk.Label(close_card, text="AL CERRAR LA APP",
+        tk.Label(close_card, text=t("on_close"),
                  font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=CARD
                  ).pack(anchor="w", padx=16, pady=(12, 8))
 
         close_btns_frame = tk.Frame(close_card, bg=CARD)
         close_btns_frame.pack(fill="x", padx=16, pady=(0, 8))
 
-        btn_quit = tk.Label(close_btns_frame, text="⏻ Salir",
+        btn_quit = tk.Label(close_btns_frame, text=t("quit_btn"),
                             font=("Cascadia Code", 10, "bold"), cursor="hand2",
                             pady=7, padx=8)
         btn_quit.pack(side="left", fill="x", expand=True, padx=(0, 4))
 
-        btn_tray = tk.Label(close_btns_frame, text="📥 Bandeja",
+        btn_tray = tk.Label(close_btns_frame, text=t("tray_btn"),
                             font=("Cascadia Code", 10, "bold"), cursor="hand2",
                             pady=7, padx=8)
         btn_tray.pack(side="right", fill="x", expand=True, padx=(4, 0))
@@ -850,11 +1063,11 @@ class App:
             if self.close_to_tray_var.get():
                 btn_tray.config(bg="#152636", fg=CYAN)
                 btn_quit.config(bg=BORDER, fg=TEXT_DIM)
-                close_desc.config(text="La ✕ oculta la ventana y la app sigue en los iconos de Windows.")
+                close_desc.config(text=t("close_tray_desc"))
             else:
                 btn_tray.config(bg=BORDER, fg=TEXT_DIM)
                 btn_quit.config(bg="#2E2410", fg=GOLD)
-                close_desc.config(text="La ✕ detiene el bot y cierra la app por completo.")
+                close_desc.config(text=t("close_quit_desc"))
 
         def select_quit(_=None):
             self.close_to_tray_var.set(False)
@@ -870,6 +1083,54 @@ class App:
         btn_tray.bind("<Button-1>", select_tray)
         update_close_ui()
 
+        # Tarjeta 5: Idioma
+        lang_card = tk.Frame(body, bg=CARD)
+        lang_card.pack(fill="x", padx=20, pady=(0, 10))
+
+        tk.Label(lang_card, text=t("lang_title"),
+                 font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=CARD
+                 ).pack(anchor="w", padx=16, pady=(12, 8))
+
+        lang_btns_frame = tk.Frame(lang_card, bg=CARD)
+        lang_btns_frame.pack(fill="x", padx=16, pady=(0, 8))
+
+        btn_en = tk.Label(lang_btns_frame, text="English",
+                          font=("Cascadia Code", 10, "bold"), cursor="hand2",
+                          pady=7, padx=8)
+        btn_en.pack(side="left", fill="x", expand=True, padx=(0, 4))
+
+        btn_es = tk.Label(lang_btns_frame, text="Español",
+                          font=("Cascadia Code", 10, "bold"), cursor="hand2",
+                          pady=7, padx=8)
+        btn_es.pack(side="right", fill="x", expand=True, padx=(4, 0))
+
+        lang_desc = tk.Label(lang_card, text=t("lang_desc"),
+                             font=("Cascadia Code", 9),
+                             fg=TEXT_DIM, bg=CARD, wraplength=300, justify="left")
+        lang_desc.pack(anchor="w", padx=16, pady=(0, 12))
+
+        self._lang_btns = {"en": btn_en, "es": btn_es}
+
+        def update_lang_ui():
+            for _code, _btn in self._lang_btns.items():
+                if _code == get_language():
+                    _btn.config(bg="#152636", fg=CYAN)
+                else:
+                    _btn.config(bg=BORDER, fg=TEXT_DIM)
+
+        def select_lang(code, _=None):
+            if code == get_language():
+                update_lang_ui()
+                return
+            set_language(code)
+            self._save_config()
+            update_lang_ui()
+            self._restart_app()
+
+        btn_en.bind("<Button-1>", lambda _: select_lang("en"))
+        btn_es.bind("<Button-1>", lambda _: select_lang("es"))
+        update_lang_ui()
+
     # ──────────────────────────────────────────
     # Página de Estadísticas (dentro de la ventana)
     # ──────────────────────────────────────────
@@ -884,7 +1145,7 @@ class App:
         # Encabezado
         header = tk.Frame(body, bg=BG)
         header.pack(fill="x", padx=20, pady=(14, 4))
-        tk.Label(header, text="ESTADÍSTICAS", font=("Cascadia Code", 12, "bold"),
+        tk.Label(header, text=t("stats_title"), font=("Cascadia Code", 12, "bold"),
                  fg=GOLD, bg=BG).pack(side="left")
 
         Divider(body).pack(fill="x", padx=20, pady=(6, 12))
@@ -892,7 +1153,7 @@ class App:
         # ── Selector de periodo ──
         per_card = tk.Frame(body, bg=CARD)
         per_card.pack(fill="x", padx=20, pady=0)
-        tk.Label(per_card, text="PERIODO",
+        tk.Label(per_card, text=t("period_title"),
                  font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=CARD
                  ).pack(anchor="w", padx=16, pady=(12, 8))
 
@@ -900,8 +1161,9 @@ class App:
         per_row.pack(fill="x", padx=16, pady=(0, 12))
 
         self._period_btns = {}
-        for key, txt in (("day", "Día"), ("week", "Semana"),
-                         ("month", "Mes"), ("year", "Año")):
+        for key, tkey in (("day", "period_day"), ("week", "period_week"),
+                          ("month", "period_month"), ("year", "period_year")):
+            txt = t(tkey)
             btn = tk.Label(per_row, text=txt, font=("Cascadia Code", 9, "bold"),
                            cursor="hand2", pady=7)
             btn.pack(side="left", fill="x", expand=True,
@@ -940,14 +1202,15 @@ class App:
         stats_card.pack(fill="x", padx=20, pady=(10, 0))
 
         self._stats_values = {}
-        for key, label, color in (
-            ("matches", "🎮  Partidas aceptadas", CYAN),
-            ("activations", "▶  Veces activado", WHITE),
-            ("time", "⏱  Tiempo activo", GREEN),
-            ("avg_act", "📈  Promedio por activación", WHITE),
-            ("avg_sess", "⏳  Sesión promedio", WHITE),
-            ("live", "🟢  Sesión actual", GREEN),
+        for key, tkey, color in (
+            ("matches", "st_matches", CYAN),
+            ("activations", "st_activations", WHITE),
+            ("time", "st_time", GREEN),
+            ("avg_act", "st_avg_act", WHITE),
+            ("avg_sess", "st_avg_sess", WHITE),
+            ("live", "st_live", GREEN),
         ):
+            label = t(tkey)
             row = tk.Frame(stats_card, bg=CARD)
             row.pack(fill="x", padx=16, pady=5)
             tk.Label(row, text=label, font=("Cascadia Code", 9),
@@ -959,7 +1222,7 @@ class App:
         tk.Frame(stats_card, bg=CARD, height=8).pack()
 
         # ── Restablecer ──
-        reset_btn = tk.Label(body, text="↺  Restablecer estadísticas",
+        reset_btn = tk.Label(body, text=t("reset_stats"),
                              font=("Cascadia Code", 9, "bold"), fg=TEXT_DIM, bg=BORDER,
                              cursor="hand2", pady=8)
         reset_btn.pack(fill="x", padx=20, pady=(10, 0))
@@ -968,19 +1231,19 @@ class App:
         def _do_reset(_=None):
             if not reset_state["confirm"]:
                 reset_state["confirm"] = True
-                reset_btn.config(text="¿Tocar de nuevo para confirmar?", fg=RED)
+                reset_btn.config(text=t("reset_confirm"), fg=RED)
                 self.root.after(3000, lambda: (reset_state.update(confirm=False),
                                          reset_btn.config(
-                                             text="↺  Restablecer estadísticas",
+                                             text=t("reset_stats"),
                                              fg=TEXT_DIM))
                           if self._page == "stats" else None)
                 return
             self._stats_store.reset()
             self._stats = self._stats_store.data
             reset_state["confirm"] = False
-            reset_btn.config(text="↺  Restablecer estadísticas", fg=TEXT_DIM)
+            reset_btn.config(text=t("reset_stats"), fg=TEXT_DIM)
             self._refresh_stats_win()
-            self._log("📊 Estadísticas restablecidas.")
+            self._log(t("stats_reset_done"))
 
         reset_btn.bind("<Button-1>", _do_reset)
         reset_btn.bind("<Enter>", lambda _: reset_btn.config(bg="#2D333B", fg=WHITE)
@@ -1196,9 +1459,9 @@ class App:
 
     def _calibrate(self, _=None):
         if self.bot_active:
-            self._log("⚠️ Detén el bot antes de calibrar.", tag="warn")
+            self._log(t("calib_busy"), tag="warn")
             return
-        self._log("📸 Calibración iniciada — 3 segundos para mostrar el popup...", tag="warn")
+        self._log(t("calib_started"), tag="warn")
         threading.Thread(
             target=lambda: self.bot.capture_template(),
             daemon=True
@@ -1208,9 +1471,9 @@ class App:
         self.toggle_btn.set_state(active)
         self.dot.set_active(active)
         if active:
-            self.status_lbl.config(text="ACTIVO", fg=GREEN)
+            self.status_lbl.config(text=t("status_active"), fg=GREEN)
         else:
-            self.status_lbl.config(text="INACTIVO", fg=RED)
+            self.status_lbl.config(text=t("status_idle"), fg=RED)
         self._apply_status_icons(active)
         self._refresh_tray_menu()
 
@@ -1222,9 +1485,9 @@ class App:
                 self.bot_active = False
                 self._update_status(False)
                 self._close_session()
-                self._log("🔒 Bot desactivado automáticamente tras aceptar.")
+                self._log(t("accepted_auto"))
             else:
-                self._log("🔄 Bot continúa activo por si se cancela la cola.")
+                self._log(t("accepted_keep"))
         self.root.after(0, _update)
 
     # ──────────────────────────────────────────
@@ -1306,6 +1569,7 @@ class App:
                 close_to_tray=bool(self.close_to_tray_var.get()),
                 log_visible=bool(getattr(self, "_log_visible", True)),
                 pos=list(getattr(self, "_win_pos", None) or []) or None,
+                lang=get_language(),
             )
         except Exception:
             pass
@@ -1468,6 +1732,39 @@ class App:
         except Exception:
             pass
 
+    def _restart_app(self):
+        """Reinicia la app (aplica cambio de idioma, conserva instancia única)."""
+        try:
+            if self.bot_active:
+                self.bot.stop()
+            self._join_bot_thread(timeout=2.0)
+            self._close_session()
+        except Exception:
+            pass
+        try:
+            if self._tray is not None:
+                self._tray.stop()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "_instance_sock", None) is not None:
+                self._instance_sock.close()
+        except Exception:
+            pass
+        try:
+            import subprocess
+            if getattr(sys, "frozen", False):
+                cmd = [sys.executable]
+            else:
+                cmd = [sys.executable, os.path.abspath(sys.argv[0])]
+            subprocess.Popen(cmd)
+        except Exception:
+            pass
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+
     # ──────────────────────────────────────────
     # Bandeja del sistema (delegada en tray.SystemTray)
     # ──────────────────────────────────────────
@@ -1501,7 +1798,7 @@ class App:
             )
             self._tray.setup()
         except Exception as e:
-            self._log(f"⚠️ No se pudo crear el icono de bandeja: {e}", tag="warn")
+            self._log(t("tray_failed", err=e), tag="warn")
 
     def _refresh_tray_menu(self):
         try:
@@ -1524,6 +1821,8 @@ class App:
 
     def start_instance_listener(self, sock):
         """Escucha avisos de segundas instancias para mostrar esta ventana."""
+        self._instance_sock = sock
+
         def _listen():
             while True:
                 try:
