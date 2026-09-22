@@ -3,7 +3,6 @@
 import json
 import os
 
-import paths
 from paths import atomic_write_json, bundled_path, migrate_user_file, user_data_dir
 
 
@@ -22,13 +21,12 @@ def test_user_data_dir_dev(tmp_path, monkeypatch):
 
 
 def test_migrate_user_file_copies_legacy(tmp_path, monkeypatch):
-    import paths
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
     legacy = tmp_path / "legacy"
     legacy.mkdir()
     (legacy / "config.json").write_text('{"a": 1}', encoding="utf-8")
-    monkeypatch.setattr(paths, "_legacy_data_dirs", lambda: [str(legacy)])
+    monkeypatch.setattr("paths._legacy_data_dirs", lambda: [str(legacy)])
     dest = migrate_user_file("config.json")
     assert dest == os.path.join(user_data_dir(), "config.json")
     assert open(dest, encoding="utf-8").read() == '{"a": 1}'
