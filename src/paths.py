@@ -33,11 +33,70 @@ def bundled_path(*parts: str) -> str:
     return os.path.join(_repo_root(), *parts)
 
 
+APP_DIR_NAME = "LoL Auto Queue"
+
+
+def _legacy_data_dirs() -> list:
+    """Ubicaciones anteriores de config.json/stats.json (para migración)."""
+    dirs = []
+    try:
+        dirs.append(_repo_root())
+    except Exception:
+        pass
+    try:
+        if getattr(sys, "frozen", False):
+            # El .exe vive en dist/ dentro del proyecto: los datos legacy
+            # están junto al exe o en la carpeta padre (raíz del proyecto).
+            exe_dir = os.path.dirname(sys.executable)
+            for d in (exe_dir, os.path.dirname(exe_dir)):
+                if d and d not in dirs:
+                    dirs.append(d)
+    except Exception:
+        pass
+    return dirs
+
+
 def user_data_dir() -> str:
-    """Carpeta escribible para config.json/stats.json (junto al .exe si congelado)."""
+    """Carpeta de datos del usuario: ~/Documents/LoL Auto Queue."""
+    try:
+        base = os.path.join(os.path.expanduser("~"), "Documents", APP_DIR_NAME)
+        os.makedirs(base, exist_ok=True)
+        return base
+    except Exception:
+        pass
+    # Fallback: comportamiento anterior (junto al .exe si congelado, si no repo).
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
     return _repo_root()
+
+
+def migrate_user_file(name: str, dest_name: str | None = None) -> str:
+    """Copia un archivo desde ubicaciones legacy si no existe en user_data_dir.
+
+    `name` es la ruta relativa en la ubicación legacy y `dest_name` (por
+    defecto igual) la relativa en la carpeta del usuario. Devuelve la ruta
+    destino. No sobrescribe nunca.
+    """
+    dest_rel = dest_name if dest_name is not None else name
+    dest = os.path.join(user_data_dir(), dest_rel)
+    if os.path.exists(dest):
+        return dest
+    try:
+        current = os.path.dirname(dest)
+        for old_dir in _legacy_data_dirs():
+            if os.path.abspath(old_dir) == os.path.abspath(current):
+                continue
+            src = os.path.join(old_dir, name)
+            if os.path.isfile(src):
+                parent = os.path.dirname(dest)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                import shutil
+                shutil.copy2(src, dest)
+                break
+    except Exception:
+        pass
+    return dest
 
 
 def atomic_write_json(path: str, data: Any) -> None:
