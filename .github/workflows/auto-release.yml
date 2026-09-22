@@ -102,7 +102,7 @@ jobs:
           pip install pyinstaller
 
       - name: Build EXE with PyInstaller
-        run: pyinstaller --noconfirm LoLAutoQueue.spec
+        run: pyinstaller --noconfirm scripts/LoLAutoQueue.spec
 
       - name: Check output
         shell: pwsh
