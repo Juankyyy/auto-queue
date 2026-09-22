@@ -12,7 +12,7 @@ import numpy as np
 import pyautogui
 from PIL import ImageGrab
 
-from paths import bundled_path, user_data_dir
+from paths import bundled_path, migrate_user_file, user_data_dir
 
 
 # Conciencia DPI para que captura y clics usen las mismas coordenadas
@@ -40,13 +40,12 @@ pyautogui.FAILSAFE = True
 
 def _resolve_template_path():
     """El template se puede recalibrar: prioriza el de junto al .exe, si no el empaquetado."""
+    # Migra recalibraciones guardadas con la estructura anterior (raiz/templates).
+    migrate_user_file(os.path.join("templates", "accept_btn.png"),
+                      os.path.join("assets", "templates", "accept_btn.png"))
     user_copy = os.path.join(user_data_dir(), "assets", "templates", "accept_btn.png")
     if os.path.exists(user_copy):
         return user_copy
-    # Compat: recalibraciones guardadas con la estructura anterior (raiz/templates).
-    legacy_copy = os.path.join(user_data_dir(), "templates", "accept_btn.png")
-    if os.path.exists(legacy_copy):
-        return legacy_copy
     return bundled_path("assets", "templates", "accept_btn.png")
 
 

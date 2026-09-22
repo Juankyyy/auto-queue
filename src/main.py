@@ -18,7 +18,7 @@ from PIL import Image, ImageTk
 import icons
 from bot import LoLAutoAccept
 from config_store import load_config, save_config
-from paths import bundled_path, user_data_dir
+from paths import bundled_path, migrate_user_file, user_data_dir
 from stats_store import MAX_STATS_EVENTS, StatsStore
 from tray import SystemTray
 
@@ -434,6 +434,11 @@ class App:
         self._drag_x = 0
         self._drag_y = 0
         self.base_dir = user_data_dir()
+        # Migra config/stats/template desde la carpeta de la app (ubicación anterior).
+        migrate_user_file("config.json")
+        migrate_user_file("stats.json")
+        migrate_user_file(os.path.join("templates", "accept_btn.png"),
+                          os.path.join("assets", "templates", "accept_btn.png"))
         self._config_path = os.path.join(self.base_dir, "config.json")
 
         self._center_window(390, 560)
