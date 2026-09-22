@@ -20,7 +20,18 @@ def test_aggregation_day(tmp_path):
     r = s.stats_for("day", now=datetime(2026, 9, 20, 12, 0, 0))
     assert (r["activations"], r["matches"], r["sessions"]) == (1, 1, 1)
     assert abs(r["seconds"] - 600.0) < 0.01
-    assert "septiembre" in r["label"]
+    assert "September" in r["label"]
+
+
+def test_label_spanish(tmp_path):
+    import i18n
+    i18n.set_language("es")
+    try:
+        s = _sample(StatsStore(str(tmp_path / "s.json")))
+        r = s.stats_for("day", now=datetime(2026, 9, 20, 12, 0, 0))
+        assert "septiembre" in r["label"]
+    finally:
+        i18n.set_language("en")
 
 
 def test_live_session_added(tmp_path):

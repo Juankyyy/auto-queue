@@ -9,7 +9,7 @@ line-length = 100
 select = ["F", "E4", "E7", "E9", "I", "UP"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["paths", "config_store", "stats_store", "tray", "icons", "bot"]
+known-first-party = ["paths", "config_store", "stats_store", "tray", "icons", "bot", "i18n"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

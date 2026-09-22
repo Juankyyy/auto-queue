@@ -7,6 +7,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 
+from i18n import months
 from paths import atomic_write_json
 
 MAX_STATS_EVENTS = 5000
@@ -124,15 +125,16 @@ class StatsStore:
                       ) -> tuple[datetime, datetime, str]:
         """(inicio, fin, etiqueta) del periodo calendario que contiene a ref."""
         ref = ref or datetime.now()
+        names = months()
         if period == "week":
             start = datetime(ref.year, ref.month, ref.day) - timedelta(days=ref.weekday())
             end = start + timedelta(days=7)
             label = (f"{start.day} – {end.day - 1} "
-                     f"{cls.MESES[start.month - 1]} {start.year}")
+                     f"{names[start.month - 1]} {start.year}")
         elif period == "month":
             start = datetime(ref.year, ref.month, 1)
             end = datetime(ref.year + (ref.month == 12), ref.month % 12 + 1, 1)
-            label = f"{cls.MESES[ref.month - 1]} {ref.year}"
+            label = f"{names[ref.month - 1]} {ref.year}"
         elif period == "year":
             start = datetime(ref.year, 1, 1)
             end = datetime(ref.year + 1, 1, 1)
@@ -140,7 +142,7 @@ class StatsStore:
         else:  # day
             start = datetime(ref.year, ref.month, ref.day)
             end = start + timedelta(days=1)
-            label = f"{start.day} {cls.MESES[start.month - 1]} {start.year}"
+            label = f"{start.day} {names[start.month - 1]} {start.year}"
         return start, end, label
 
     def stats_for(self, period: str,

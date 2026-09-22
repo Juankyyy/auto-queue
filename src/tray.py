@@ -14,11 +14,10 @@ from PIL import Image, ImageDraw
 from pystray import Menu as TrayMenu
 from pystray import MenuItem as TrayItem
 
+from i18n import t
 from paths import bundled_path
 
 APP_NAME = "LoL Auto Queue"
-TITLE_ACTIVE = "LoL Auto Queue — ACTIVO"
-TITLE_IDLE = "LoL Auto Queue — INACTIVO"
 TASKBAR_SIZES = (16, 24, 32, 48)
 
 
@@ -91,17 +90,17 @@ class SystemTray:
         """Construye iconos, menú y arranca pystray en hilo daemon."""
         self._build_status_icons()
         menu = TrayMenu(
-            TrayItem('Mostrar ventana',
+            TrayItem(t("tray_show"),
                      lambda icon, _: self._root.after(0, self._on_show),
                      default=True, visible=False),
             TrayItem(
-                lambda _: "Desactivar bot" if self._is_active() else "Activar bot",
+                lambda _: t("tray_disable") if self._is_active() else t("tray_enable"),
                 lambda icon, _: self._root.after(0, self._on_toggle)),
-            TrayItem("Abrir configuraciones",
+            TrayItem(t("tray_settings"),
                      lambda icon, _: self._root.after(0, self._on_settings)),
-            TrayItem("Cerrar", lambda icon, _: self._root.after(0, self._on_quit)),
+            TrayItem(t("tray_quit"), lambda icon, _: self._root.after(0, self._on_quit)),
         )
-        self._icon = pystray.Icon(APP_NAME, self.tray_image(), TITLE_IDLE, menu)
+        self._icon = pystray.Icon(APP_NAME, self.tray_image(), t("tray_idle"), menu)
         threading.Thread(target=self._icon.run, daemon=True).start()
         self._root.bind("<Map>", lambda _: self._on_map())
         self._root.bind("<Unmap>", lambda _: self._on_unmap())
@@ -161,7 +160,8 @@ class SystemTray:
                 img = self._img_on if active else self._img_off
                 if img is not None:
                     self._icon.icon = img
-                self._icon.title = TITLE_ACTIVE if active else TITLE_IDLE
+                self._icon.title = (t("tray_active") if active
+                                    else t("tray_idle"))
         except Exception:
             pass
         try:

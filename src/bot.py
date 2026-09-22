@@ -12,6 +12,7 @@ import numpy as np
 import pyautogui
 from PIL import ImageGrab
 
+from i18n import t
 from paths import bundled_path, migrate_user_file, user_data_dir
 
 
@@ -99,13 +100,13 @@ class LoLAutoAccept:
 
     def start(self):
         self._run_event.set()
-        self._emit("🟢 Bot activado. Monitoreando pantalla...", "success")
+        self._emit(t("bot_started"), "success")
         self._loop()
 
     def stop(self):
         if self._run_event.is_set():
             self._run_event.clear()
-            self._emit("🔴 Bot detenido.", "info")
+            self._emit(t("bot_stopped"), "info")
 
     def _sleep_interruptible(self, seconds):
         """Espera por tramos para que stop() interrumpa sin demora larga."""
@@ -135,7 +136,7 @@ class LoLAutoAccept:
 
                 if found and location:
                     actual_delay = max(0.05, self.delay + random.uniform(-0.1, 0.2))
-                    self._emit(f"✅ ¡Partida encontrada! Aceptando en {actual_delay:.2f}s...",
+                    self._emit(t("match_found", secs=f"{actual_delay:.2f}"),
                                "success")
                     self._sleep_interruptible(actual_delay)
                     if not self._run_event.is_set():
@@ -143,12 +144,13 @@ class LoLAutoAccept:
                     try:
                         self._click(location)
                     except pyautogui.FailSafeException:
-                        self._emit("⚠️ Failsafe de pyautogui: mouse en la esquina, bot detenido.",
+                        self._emit(t("failsafe_corner"),
                                    "warn")
                         self._run_event.clear()
                         break
                     self.partidas_aceptadas += 1
-                    self._emit(f"🎮 Partida #{self.partidas_aceptadas} aceptada.", "success")
+                    self._emit(t("match_accepted", n=self.partidas_aceptadas),
+                               "success")
 
                     if self.auto_deactivate:
                         self._run_event.clear()
@@ -156,17 +158,17 @@ class LoLAutoAccept:
                         break
                     else:
                         self.on_accepted(False)
-                        self._emit("⏳ En espera... Manteniendo bot activo por si se cancela la cola.",
+                        self._emit(t("waiting_keep"),
                                    "info")
                         # Esperar a que la ventana de diálogo desaparezca (interrumpible)
                         self._sleep_interruptible(6)
 
             except pyautogui.FailSafeException:
-                self._emit("⚠️ Failsafe de pyautogui: bot detenido.", "warn")
+                self._emit(t("failsafe_stopped"), "warn")
                 self._run_event.clear()
                 break
             except Exception as e:
-                self._emit(f"⚠️ Error: {e}", "error")
+                self._emit(t("error_prefix", err=e), "error")
 
             self._sleep_interruptible(self.poll_interval)
 
@@ -188,12 +190,12 @@ class LoLAutoAccept:
         global TEMPLATE_PATH
         TEMPLATE_PATH = _resolve_template_path()
         if not os.path.exists(TEMPLATE_PATH):
-            self._emit("⚠️ Template no encontrado. Usando detección por color como respaldo.",
+            self._emit(t("template_missing"),
                        "warn")
             return None
         template = cv2.imread(TEMPLATE_PATH, cv2.IMREAD_COLOR)
         if template is None:
-            self._emit(f"⚠️ Template ilegible ({TEMPLATE_PATH}). Usando detección por color.",
+            self._emit(t("template_unreadable", path=TEMPLATE_PATH),
                        "warn")
             return None
         gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
@@ -204,7 +206,7 @@ class LoLAutoAccept:
             h = max(8, int(gray.shape[0] * scale))
             resized = cv2.resize(gray, (w, h), interpolation=cv2.INTER_AREA)
             templates.append((scale, resized))
-        self._emit("📄 Template del botón ¡ACEPTAR! cargado correctamente.", "info")
+        self._emit(t("template_loaded"), "info")
         return templates
 
     def _match_template(self, screenshot, template):
@@ -293,7 +295,7 @@ class LoLAutoAccept:
         recorta esa región y la guarda como template.
         Retorna True si tuvo éxito.
         """
-        self._emit("📸 Capturando template en 3 segundos... Asegúrate de tener el popup visible.",
+        self._emit(t("capturing_template"),
                    "warn")
         time.sleep(3)
 
@@ -301,7 +303,7 @@ class LoLAutoAccept:
         found, location = self._detect_by_color(screenshot)
 
         if not found or not location:
-            self._emit("❌ No se detectó el botón. Abre el popup de 'PARTIDA ENCONTRADA' primero.",
+            self._emit(t("no_button"),
                        "error")
             return False
 
@@ -323,7 +325,7 @@ class LoLAutoAccept:
         # Actualizar la ruta en caliente para esta sesión
         global TEMPLATE_PATH
         TEMPLATE_PATH = save_path
-        self._emit(f"✅ Template guardado correctamente en: {save_path}", "success")
+        self._emit(t("template_saved", path=save_path), "success")
         return True
 
     # ------------------------------------------------------------------
